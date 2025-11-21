@@ -1,0 +1,245 @@
+/* Sticky2Jira Custom Styles */
+
+:root {
+  --color-yellow: #ffeb3b;
+  --color-pink: #f48fb1;
+  --color-blue: #64b5f6;
+  --color-green: #81c784;
+  --color-orange: #ffb74d;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  background-color: #f8f9fa;
+}
+
+.navbar-brand {
+  font-weight: 600;
+  font-size: 1.5rem;
+}
+
+/* Progress Bar */
+#progressContainer {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background-color: white;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Alert Styling */
+.alert {
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Tab Styling */
+.nav-tabs .nav-link {
+  font-weight: 500;
+}
+
+.nav-tabs .nav-link.active {
+  font-weight: 600;
+}
+
+/* Card Styling */
+.card {
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 0.75rem;
+}
+
+.card-header {
+  background-color: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+  font-weight: 600;
+}
+
+/* OCR Results */
+.ocr-region {
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background-color: white;
+}
+
+.ocr-region-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.color-badge {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid #dee2e6;
+}
+
+.confidence-badge {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Color Mapping */
+.color-mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border-radius: 0.5rem;
+}
+
+.color-mapping-row .color-badge {
+  flex-shrink: 0;
+}
+
+.color-mapping-row select {
+  flex-grow: 1;
+}
+
+/* Issues Table */
+#issuesTable {
+  font-size: 0.9rem;
+}
+
+#issuesTable td {
+  vertical-align: middle;
+}
+
+#issuesTable .color-cell {
+  text-align: center;
+}
+
+#issuesTable .editable {
+  cursor: pointer;
+}
+
+#issuesTable .editable:hover {
+  background-color: #f8f9fa;
+}
+
+/* Image Preview */
+#imagePreview {
+  text-align: center;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-radius: 0.5rem;
+}
+
+#previewImg {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+}
+
+/* Import Results */
+.import-result-item {
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.import-result-item.success {
+  background-color: #d4edda;
+  border-left: 4px solid #28a745;
+}
+
+.import-result-item.updated {
+  background-color: #d1ecf1;
+  border-left: 4px solid #17a2b8;
+}
+
+.import-result-item.failed {
+  background-color: #f8d7da;
+  border-left: 4px solid #dc3545;
+}
+
+.import-result-item .icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.import-result-item .content {
+  flex-grow: 1;
+}
+
+.import-result-item .issue-link {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* Buttons */
+.btn {
+  border-radius: 0.5rem;
+  font-weight: 500;
+  padding: 0.5rem 1.5rem;
+}
+
+.btn-lg {
+  padding: 0.75rem 2rem;
+  font-size: 1.1rem;
+}
+
+/* Utility Classes */
+.text-muted {
+  color: #6c757d !important;
+}
+
+/* Loading Spinner */
+.spinner-border-sm {
+  width: 1rem;
+  height: 1rem;
+  border-width: 0.15rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .nav-tabs .nav-link {
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .card-header h5 {
+    font-size: 1rem;
+  }
+
+  .color-mapping-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* History Table */
+.history-table {
+  font-size: 0.9rem;
+}
+
+.history-table .status-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* Linked Regions Indicator */
+.linked-indicator {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  background-color: #e7f3ff;
+  border: 1px solid #b3d9ff;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+}

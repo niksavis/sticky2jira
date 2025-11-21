@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sticky2Jira - OCR to Jira Issue Converter</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    
+    <!-- Bootstrap CSS (self-hosted) -->
+    <link rel="stylesheet" href="/static/libs/bootstrap-5.3.0/css/bootstrap.min.css">
+    
+    <!-- DataTables CSS (self-hosted) -->
+    <link rel="stylesheet" href="/static/libs/datatables-1.13/css/dataTables.bootstrap5.min.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+    <!-- Header -->
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">Sticky2Jira</span>
+            <button class="btn btn-outline-light btn-sm" id="newSessionBtn">New Import</button>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <div class="container-fluid mt-3">
+        <!-- Progress Indicator -->
+        <div id="progressContainer" class="mb-3" style="display: none;">
+            <div class="progress">
+                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 0%"></div>
+            </div>
+            <div id="progressMessage" class="mt-2 text-center"></div>
+        </div>
+
+        <!-- Alert Container -->
+        <div id="alertContainer"></div>
+
+        <!-- Tabbed Wizard Interface -->
+        <ul class="nav nav-tabs" id="wizardTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="setup-tab" data-bs-toggle="tab" 
+                        data-bs-target="#setup" type="button" role="tab">
+                    1. Setup
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="upload-tab" data-bs-toggle="tab" 
+                        data-bs-target="#upload" type="button" role="tab">
+                    2. Upload
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="ocr-tab" data-bs-toggle="tab" 
+                        data-bs-target="#ocr" type="button" role="tab">
+                    3. OCR Review
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="mapping-tab" data-bs-toggle="tab" 
+                        data-bs-target="#mapping" type="button" role="tab">
+                    4. Mapping
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="issues-tab" data-bs-toggle="tab" 
+                        data-bs-target="#issues" type="button" role="tab">
+                    5. Issue Review
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="import-tab" data-bs-toggle="tab" 
+                        data-bs-target="#import" type="button" role="tab">
+                    6. Import
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="results-tab" data-bs-toggle="tab" 
+                        data-bs-target="#results" type="button" role="tab">
+                    7. Results
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content mt-3" id="wizardTabContent">
+            <!-- Tab 1: Setup -->
+            <div class="tab-pane fade show active" id="setup" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Jira Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="jiraSettingsForm">
+                            <div class="mb-3">
+                                <label for="serverUrl" class="form-label">Jira Server URL</label>
+                                <input type="url" class="form-control" id="serverUrl" 
+                                       placeholder="https://company.atlassian.net" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="username" class="form-label">Username/Email</label>
+                                <input type="email" class="form-control" id="username" 
+                                       placeholder="user@company.com" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="apiToken" class="form-label">API Token</label>
+                                <input type="password" class="form-control" id="apiToken" 
+                                       placeholder="Your Jira API token" required>
+                                <div class="form-text">
+                                    Generate API token: Account Settings → Security → API tokens
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="defaultProject" class="form-label">Default Project (optional)</label>
+                                <input type="text" class="form-control" id="defaultProject" 
+                                       placeholder="A935">
+                            </div>
+                            <button type="button" class="btn btn-primary" id="testConnectionBtn">
+                                Test Connection
+                            </button>
+                            <button type="submit" class="btn btn-success">
+                                Save Settings
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Upload -->
+            <div class="tab-pane fade" id="upload" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Upload Sticky Note Image</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="imageFile" class="form-label">Select Image (max 5MB)</label>
+                            <input type="file" class="form-control" id="imageFile" 
+                                   accept="image/jpeg,image/png,image/jpg">
+                        </div>
+                        <div id="imagePreview" class="mb-3" style="display: none;">
+                            <img id="previewImg" src="" alt="Preview" class="img-fluid" 
+                                 style="max-height: 400px;">
+                        </div>
+                        <button type="button" class="btn btn-primary" id="uploadImageBtn" disabled>
+                            Upload Image
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="processOcrBtn" 
+                                style="display: none;">
+                            Start OCR Processing
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: OCR Review -->
+            <div class="tab-pane fade" id="ocr" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>OCR Extraction Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="ocrResults">
+                            <p class="text-muted">No OCR results yet. Upload and process an image first.</p>
+                        </div>
+                        <button type="button" class="btn btn-primary" id="proceedToMappingBtn" 
+                                style="display: none;">
+                            Proceed to Mapping
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Mapping -->
+            <div class="tab-pane fade" id="mapping" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Color to Issue Type Mapping</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="mappingForm">
+                            <div class="mb-3">
+                                <label for="mappingProject" class="form-label">Project</label>
+                                <select class="form-select" id="mappingProject" required>
+                                    <option value="">Select project...</option>
+                                </select>
+                            </div>
+                            <div id="colorMappings"></div>
+                            <button type="submit" class="btn btn-primary">
+                                Save Mappings
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="proceedToIssuesBtn">
+                                Proceed to Issue Review
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 5: Issue Review -->
+            <div class="tab-pane fade" id="issues" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Review and Edit Issues</h5>
+                    </div>
+                    <div class="card-body">
+                        <table id="issuesTable" class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Color</th>
+                                    <th>Type</th>
+                                    <th>Summary</th>
+                                    <th>Description</th>
+                                    <th>Confidence</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <button type="button" class="btn btn-primary" id="proceedToImportBtn">
+                            Proceed to Import
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 6: Import -->
+            <div class="tab-pane fade" id="import" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Import to Jira</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="importSummary" class="mb-3">
+                            <p>Ready to import <span id="issueCount">0</span> issues to Jira.</p>
+                        </div>
+                        <button type="button" class="btn btn-success btn-lg" id="startImportBtn">
+                            Start Import
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 7: Results -->
+            <div class="tab-pane fade" id="results" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Import Results</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="importResults">
+                            <p class="text-muted">No import results yet.</p>
+                        </div>
+                        <button type="button" class="btn btn-primary" id="viewHistoryBtn">
+                            View Import History
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap Bundle JS (self-hosted) -->
+    <script src="/static/libs/bootstrap-5.3.0/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- jQuery (required for DataTables) -->
+    <script src="/static/libs/jquery-3.7.0/jquery.min.js"></script>
+    
+    <!-- DataTables JS (self-hosted) -->
+    <script src="/static/libs/datatables-1.13/js/jquery.dataTables.min.js"></script>
+    <script src="/static/libs/datatables-1.13/js/dataTables.bootstrap5.min.js"></script>
+    
+    <!-- Socket.IO Client (self-hosted) -->
+    <script src="/static/libs/socket.io-4.5.4/socket.io.min.js"></script>
+    
+    <!-- Custom Application JS -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
