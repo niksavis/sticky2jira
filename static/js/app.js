@@ -753,6 +753,11 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
+  // Issue Review tab - load issues from database when shown
+  document.getElementById("issues-tab").addEventListener("shown.bs.tab", () => {
+    loadIssuesFromDatabase();
+  });
+
   // Mapping tab
   document.getElementById("mappingProject").addEventListener("change", (e) => {
     loadIssueTypes(e.target.value);
@@ -769,14 +774,6 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("proceedToIssuesBtn")
     .addEventListener("click", () => {
       applyColorMappingsAndProceed();
-    });
-
-  // Proceed to Import button
-  document
-    .getElementById("proceedToImportBtn")
-    .addEventListener("click", () => {
-      switchTab("import-tab");
-      updateImportSummary();
     });
 
   // Start Import button
@@ -851,11 +848,34 @@ function applyColorMappingsAndProceed() {
     region.project_key = projectKey;
   });
 
-  // Navigate to review tab
-  switchTab("issues-tab");
+  // Save mappings to database
+  const updates = appState.ocrRegions.map((region) => ({
+    id: region.db_id,
+    project_key: projectKey,
+    issue_type: region.issue_type,
+  }));
 
-  // Populate review table
-  populateReviewTable();
+  fetch("/api/issues/bulk-update-mapping", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ updates }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        // Navigate to review tab
+        switchTab("issues-tab");
+
+        // Populate review table
+        populateReviewTable();
+      } else {
+        showAlert("Failed to save mappings", "danger");
+      }
+    })
+    .catch((error) => {
+      console.error("Failed to save mappings:", error);
+      showAlert("Failed to save mappings", "danger");
+    });
 }
 
 function populateReviewTable() {
@@ -867,7 +887,7 @@ function populateReviewTable() {
       ? `<a href="${appState.jiraSettings?.server_url || ""}/browse/${
           region.issue_key
         }" target="_blank" class="badge bg-success">${region.issue_key}</a>`
-      : '<span class="badge bg-secondary">Not imported</span>';
+      : '<span class="badge bg-secondary">-</span>';
 
     const row = tbody.insertRow();
     row.innerHTML = `
@@ -875,6 +895,7 @@ function populateReviewTable() {
       <td><span class="color-badge" style="background-color: ${
         region.color_hex
       };"></span></td>
+      <td>${issueKeyCell}</td>
       <td>${region.issue_type || "N/A"}</td>
       <td contenteditable="true" data-field="summary" data-id="${index}">${
       region.text || ""
@@ -883,7 +904,6 @@ function populateReviewTable() {
       region.linked_text || ""
     }</td>
       <td>${Math.round(region.confidence || 0)}%</td>
-      <td>${issueKeyCell}</td>
       <td>
         <button class="btn btn-sm btn-danger" onclick="deleteIssue(${index})">Delete</button>
       </td>
@@ -904,9 +924,53 @@ function populateReviewTable() {
           } else if (field === "description") {
             appState.ocrRegions[id].linked_text = value;
           }
+
+          // Update database if db_id exists
+          if (appState.ocrRegions[id].db_id) {
+            const updateData = {};
+            updateData[field] = value;
+            fetch(`/api/issues/${appState.ocrRegions[id].db_id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(updateData),
+            }).catch((error) =>
+              console.error("Failed to update issue:", error)
+            );
+          }
         }
       });
     });
+
+  // Update issue count badge
+  document.getElementById("issueCount").textContent =
+    appState.ocrRegions.length;
+}
+
+function loadIssuesFromDatabase() {
+  fetch("/api/issues/preview")
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success && data.issues && data.issues.length > 0) {
+        // Merge database issues with current OCR regions
+        // If OCR regions exist (from current session), keep them
+        // Otherwise, load from database
+        if (appState.ocrRegions.length === 0) {
+          appState.ocrRegions = data.issues;
+        } else {
+          // Update existing regions with database data (issue_key, etc.)
+          appState.ocrRegions.forEach((region) => {
+            const dbIssue = data.issues.find((i) => i.db_id === region.db_id);
+            if (dbIssue) {
+              region.issue_key = dbIssue.issue_key;
+              region.project_key = dbIssue.project_key;
+              region.issue_type = dbIssue.issue_type;
+            }
+          });
+        }
+        populateReviewTable();
+      }
+    })
+    .catch((error) => console.error("Failed to load issues:", error));
 }
 
 function deleteIssue(index) {
@@ -935,7 +999,8 @@ function startJiraImport() {
 
   // Prepare issues data
   const issues = appState.ocrRegions.map((region, index) => ({
-    id: region.id, // Database ID if available
+    db_id: region.db_id, // Database ID for updating records
+    id: region.id, // Region ID for reference
     issue_key: region.issue_key, // Existing Jira key if already imported
     project_key: region.project_key,
     issue_type: region.issue_type,

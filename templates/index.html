@@ -69,19 +69,13 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="issues-tab" data-bs-toggle="tab" 
                         data-bs-target="#issues" type="button" role="tab">
-                    5. Issue Review
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="import-tab" data-bs-toggle="tab" 
-                        data-bs-target="#import" type="button" role="tab">
-                    6. Import
+                    5. Issue Review & Import
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="results-tab" data-bs-toggle="tab" 
                         data-bs-target="#results" type="button" role="tab">
-                    7. Results
+                    6. Results
                 </button>
             </li>
         </ul>
@@ -255,53 +249,43 @@
                 </div>
             </div>
 
-            <!-- Tab 5: Issue Review -->
+            <!-- Tab 5: Issue Review & Import -->
             <div class="tab-pane fade" id="issues" role="tabpanel">
                 <div class="card">
-                    <div class="card-header">
-                        <h5>Review and Edit Issues</h5>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Review and Edit Issues</h5>
+                        <div>
+                            <span class="badge bg-info me-2">Issues: <span id="issueCount">0</span></span>
+                            <button type="button" class="btn btn-success" id="startImportBtn">
+                                Import to Jira
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body">
+                        <div class="alert alert-info">
+                            <strong>Tip:</strong> Click on Summary or Description cells to edit. Changes are saved automatically.
+                            Issues with a green badge have already been imported - they will be updated on re-import.
+                        </div>
                         <table id="issuesTable" class="table table-striped table-hover">
                             <thead>
                                 <tr>
                                     <th>ID</th>
                                     <th>Color</th>
+                                    <th>Issue Key</th>
                                     <th>Type</th>
                                     <th>Summary</th>
                                     <th>Description</th>
                                     <th>Confidence</th>
-                                    <th>Issue Key</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
                         </table>
-                        <button type="button" class="btn btn-primary" id="proceedToImportBtn">
-                            Proceed to Import
-                        </button>
                     </div>
                 </div>
             </div>
 
-            <!-- Tab 6: Import -->
-            <div class="tab-pane fade" id="import" role="tabpanel">
-                <div class="card">
-                    <div class="card-header">
-                        <h5>Import to Jira</h5>
-                    </div>
-                    <div class="card-body">
-                        <div id="importSummary" class="mb-3">
-                            <p>Ready to import <span id="issueCount">0</span> issues to Jira.</p>
-                        </div>
-                        <button type="button" class="btn btn-success btn-lg" id="startImportBtn">
-                            Start Import
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tab 7: Results -->
+            <!-- Tab 6: Results -->
             <div class="tab-pane fade" id="results" role="tabpanel">
                 <div class="card">
                     <div class="card-header">
@@ -311,9 +295,6 @@
                         <div id="importResults">
                             <p class="text-muted">No import results yet.</p>
                         </div>
-                        <button type="button" class="btn btn-primary" id="viewHistoryBtn">
-                            View Import History
-                        </button>
                     </div>
                 </div>
             </div>

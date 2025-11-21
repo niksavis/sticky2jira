@@ -536,7 +536,9 @@ def import_to_jira():
 
                 # Check if issue already has a Jira key (update vs create)
                 existing_issue_key = issue.get("issue_key")
-                issue_id = issue.get("id")
+                issue_id = issue.get("db_id") or issue.get(
+                    "id"
+                )  # Try db_id first, fallback to id
 
                 if existing_issue_key:
                     # Update existing issue
@@ -657,9 +659,33 @@ def get_issues_preview():
     try:
         app.logger.info("Retrieving issues preview")
 
-        # TODO: Implement issue retrieval using session_manager
+        # Get all issues from database
+        issues = session_manager.get_all_issues()
 
-        return jsonify({"success": True, "issues": []})
+        # Transform to frontend format
+        issues_data = [
+            {
+                "db_id": issue["id"],
+                "id": issue["region_id"],
+                "color_hex": issue["color_hex"],
+                "color_name": "unknown",  # TODO: derive from color_hex
+                "text": issue["summary"],
+                "linked_text": issue["description"],
+                "issue_type": issue["issue_type"],
+                "project_key": issue["project_key"],
+                "issue_key": issue["issue_key"],
+                "confidence": issue["confidence"],
+                "bbox": {
+                    "x": issue["bbox_x"],
+                    "y": issue["bbox_y"],
+                    "width": issue["bbox_width"],
+                    "height": issue["bbox_height"],
+                },
+            }
+            for issue in issues
+        ]
+
+        return jsonify({"success": True, "issues": issues_data})
     except Exception as e:
         app.logger.error(f"Failed to retrieve issues: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
@@ -681,6 +707,64 @@ def bulk_edit_issues():
         return jsonify({"success": True, "message": f"{len(issues)} issues updated"})
     except Exception as e:
         app.logger.error(f"Bulk edit failed: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/issues/bulk-update-mapping", methods=["POST"])
+def bulk_update_mapping():
+    """Update project_key and issue_type for multiple issues after color mapping."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        updates = data.get("updates", [])
+        app.logger.info(f"Updating mappings for {len(updates)} issues")
+
+        updated_count = 0
+        for update in updates:
+            issue_id = update.get("id")
+            if not issue_id:
+                continue
+
+            update_data = {}
+            if "project_key" in update:
+                update_data["project_key"] = update["project_key"]
+            if "issue_type" in update:
+                update_data["issue_type"] = update["issue_type"]
+
+            if update_data and session_manager.update_issue(issue_id, update_data):
+                updated_count += 1
+
+        app.logger.info(f"Updated {updated_count} issue mappings")
+        return jsonify(
+            {
+                "success": True,
+                "message": f"Updated {updated_count} issue mappings",
+                "updated": updated_count,
+            }
+        )
+    except Exception as e:
+        app.logger.error(f"Bulk update mapping failed: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/issues/<int:issue_id>", methods=["PUT"])
+def update_single_issue(issue_id):
+    """Update a single issue field (summary or description)."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        app.logger.info(f"Updating issue {issue_id}: {data}")
+
+        if session_manager.update_issue(issue_id, data):
+            return jsonify({"success": True, "message": "Issue updated"})
+        else:
+            return jsonify({"success": False, "error": "Update failed"}), 500
+    except Exception as e:
+        app.logger.error(f"Update issue failed: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 

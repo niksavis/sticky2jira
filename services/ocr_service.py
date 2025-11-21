@@ -181,6 +181,9 @@ class OCRService:
         regions = self._remove_duplicates(regions)
         logger.info(f"After deduplication: {len(regions)} unique regions")
 
+        # Consolidate similar colors to prevent duplicate color mappings
+        regions = self._consolidate_colors(regions)
+
         # Spatial linking (find description stickies near summary stickies)
         self._link_regions(regions)
 
@@ -386,6 +389,79 @@ class OCRService:
         iou = intersection_area / union_area if union_area > 0 else 0.0
         return iou
 
+    def _consolidate_colors(
+        self, regions: List[StickyRegion], color_distance_threshold: int = 30
+    ) -> List[StickyRegion]:
+        """
+        Consolidate similar colors to prevent duplicate color mappings.
+        Groups regions with similar hex colors and assigns them the same representative color.
+
+        Args:
+            regions: List of StickyRegion objects
+            color_distance_threshold: Maximum RGB distance to consider colors as similar (0-255 scale)
+
+        Returns:
+            List of regions with consolidated colors
+        """
+        if len(regions) <= 1:
+            return regions
+
+        def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+            """Convert hex color to RGB tuple."""
+            hex_color = hex_color.lstrip("#")
+            return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore
+
+        def rgb_distance(
+            rgb1: Tuple[int, int, int], rgb2: Tuple[int, int, int]
+        ) -> float:
+            """Calculate Euclidean distance between two RGB colors."""
+            return np.sqrt(sum((a - b) ** 2 for a, b in zip(rgb1, rgb2)))
+
+        # Group regions by similar colors
+        color_groups: List[List[StickyRegion]] = []
+        processed = set()
+
+        for i, region in enumerate(regions):
+            if i in processed:
+                continue
+
+            # Start new color group
+            group = [region]
+            processed.add(i)
+            rgb1 = hex_to_rgb(region.color_hex)
+
+            # Find all similar colors
+            for j, other_region in enumerate(regions):
+                if j in processed:
+                    continue
+
+                rgb2 = hex_to_rgb(other_region.color_hex)
+                distance = rgb_distance(rgb1, rgb2)
+
+                if distance <= color_distance_threshold:
+                    group.append(other_region)
+                    processed.add(j)
+
+            color_groups.append(group)
+
+        # Assign representative color to each group (use most common color)
+        consolidated_regions = []
+        for group in color_groups:
+            # Use the color from the first region as representative
+            representative_color = group[0].color_hex
+            representative_name = group[0].color_name
+
+            # Update all regions in group to use representative color
+            for region in group:
+                region.color_hex = representative_color
+                region.color_name = representative_name
+                consolidated_regions.append(region)
+
+        logger.info(
+            f"Consolidated {len(regions)} regions into {len(color_groups)} color groups"
+        )
+        return consolidated_regions
+
     def _remove_duplicates(
         self, regions: List[StickyRegion], iou_threshold: float = 0.5
     ) -> List[StickyRegion]:
@@ -535,18 +611,50 @@ def process_image_async(
     try:
         regions = ocr_service.process_image(image_path, progress_callback)
 
-        # Emit completion
+        # Save regions to database for persistence
+        from services import session_manager
+        import os
+
+        image_filename = os.path.basename(image_path)
+        saved_regions = []
+
+        for region in regions:
+            # Prepare issue data for database
+            issue_data = {
+                "image_filename": image_filename,
+                "region_id": region["id"],
+                "color_hex": region["color_hex"],
+                "summary": region["text"],
+                "description": "",  # Will be filled from linked regions
+                "issue_type": "",  # Will be set during mapping
+                "project_key": "",  # Will be set during mapping
+                "issue_key": None,  # Will be set after Jira import
+                "confidence": region["confidence"],
+                "bbox_x": region["bbox"]["x"],
+                "bbox_y": region["bbox"]["y"],
+                "bbox_width": region["bbox"]["width"],
+                "bbox_height": region["bbox"]["height"],
+            }
+
+            # Save to database and get ID
+            db_id = session_manager.create_issue(issue_data)
+            region["db_id"] = db_id  # Add database ID to region
+            saved_regions.append(region)
+
+        logger.info(f"Saved {len(saved_regions)} regions to database")
+
+        # Emit completion with database IDs included
         socketio.emit(
             callback_event,
             {
                 "percent": 100,
                 "status": "complete",
-                "message": f"Extracted {len(regions)} regions",
-                "regions": regions,
+                "message": f"Extracted {len(saved_regions)} regions",
+                "regions": saved_regions,
             },
         )
 
-        return regions
+        return saved_regions
     except Exception as e:
         logger.error(f"OCR processing failed: {str(e)}", exc_info=True)
 
