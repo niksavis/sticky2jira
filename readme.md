@@ -1,5 +1,8 @@
 # Sticky2Jira
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+
 Browser-based local application that extracts text from sticky note images using OCR and creates/updates Jira issues.
 
 ## Features
@@ -172,9 +175,19 @@ sticky2jira/
 
 ## License
 
-This project is for internal use. See LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Acknowledgments
+
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) - Pure Python OCR engine
+- [Flask](https://flask.palletsprojects.com/) - Web framework
+- [Bootstrap](https://getbootstrap.com/) - Frontend framework
 
 ---
 
-**Version:** 1.0.0 (Phase 1 MVP)  
+**Version:** 0.1.0-alpha (Phase 1 MVP - In Development)  
 **Last Updated:** November 21, 2025
