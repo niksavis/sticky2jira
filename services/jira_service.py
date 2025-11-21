@@ -6,10 +6,14 @@ Connection management, field discovery, issue creation/update with progress call
 import os
 import json
 import logging
+import urllib3
 from typing import Dict, List, Optional, Any, Callable
 
 from jira import JIRA
 from jira.exceptions import JIRAError
+
+# Disable SSL warnings for internal Jira servers without valid certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +28,15 @@ TEMPLATES_DIR = "jira_templates"
 class JiraService:
     """Manages Jira API interactions and issue operations."""
 
-    def __init__(self, server_url: str, username: str, api_token: str):
+    def __init__(self, server_url: str, api_token: str):
         """
         Initialize Jira service.
 
         Args:
             server_url: Jira server URL (e.g., 'https://company.atlassian.net')
-            username: Jira username/email
             api_token: Jira API token
         """
         self.server_url = server_url.rstrip("/")
-        self.username = username
         self.api_token = api_token
         self._client: Optional[JIRA] = None
 
@@ -48,8 +50,10 @@ class JiraService:
             try:
                 self._client = JIRA(
                     server=self.server_url,
-                    basic_auth=(self.username, self.api_token),
-                    options={"verify": True},
+                    token_auth=self.api_token,
+                    options={
+                        "verify": False
+                    },  # Disable SSL verification for internal Jira servers
                 )
                 logger.info(f"Connected to Jira server: {self.server_url}")
             except JIRAError as e:
@@ -154,26 +158,60 @@ class JiraService:
             Dictionary of field metadata
         """
         try:
-            fields = self.client.createmeta(
-                projectKeys=project_key,
-                issuetypeNames=issue_type,
-                expand="projects.issuetypes.fields",
-            )
+            # For Jira 10.3.9+, use project_issue_fields
+            # First get the issue type ID
+            issue_types = self.get_issue_types(project_key)
+            issue_type_id = None
+            for it in issue_types:
+                if it["name"] == issue_type:
+                    issue_type_id = it["id"]
+                    break
 
-            # Navigate the nested structure
-            if not fields.get("projects"):
-                raise ValueError(
-                    f"Project {project_key} not found or no create permission"
-                )
-
-            project_meta = fields["projects"][0]
-            if not project_meta.get("issuetypes"):
+            if not issue_type_id:
                 raise ValueError(
                     f'Issue type "{issue_type}" not found in {project_key}'
                 )
 
-            issue_type_meta = project_meta["issuetypes"][0]
-            field_meta = issue_type_meta.get("fields", {})
+            # Get fields using the newer API
+            fields = self.client.project_issue_fields(project_key, issue_type_id)
+
+            # Convert to the expected format
+            field_meta = {}
+            for field in fields:
+                field_id = getattr(field, "id", None) or getattr(field, "fieldId", None)
+                if field_id:
+                    # Convert schema (PropertyHolder) to dict
+                    schema = getattr(field, "schema", None)
+                    schema_dict = {}
+                    if schema:
+                        schema_dict = {
+                            "type": getattr(schema, "type", None),
+                            "custom": getattr(schema, "custom", None),
+                        }
+
+                    # Convert allowedValues (PropertyHolder objects) to dicts
+                    allowed_values = getattr(field, "allowedValues", None)
+                    allowed_values_list = None
+                    if allowed_values:
+                        allowed_values_list = []
+                        for val in allowed_values:
+                            # PropertyHolder objects - use getattr to extract properties
+                            val_dict = {
+                                "id": getattr(val, "id", None),
+                                "name": getattr(val, "name", None),
+                                "value": getattr(val, "value", None),
+                            }
+                            allowed_values_list.append(val_dict)
+
+                    field_meta[field_id] = {
+                        "name": getattr(field, "name", ""),
+                        "required": getattr(field, "required", False),
+                        "schema": schema_dict,
+                        "allowedValues": allowed_values_list,
+                    }
+
+            # Fetch team options for team fields that don't have allowedValues
+            self._fetch_team_options(project_key, field_meta)
 
             logger.info(
                 f"Retrieved {len(field_meta)} fields for {project_key}/{issue_type}"
@@ -182,6 +220,117 @@ class JiraService:
         except JIRAError as e:
             logger.error(f"Failed to retrieve field metadata: {e.text}")
             raise
+
+    def _fetch_team_options(self, project_key: str, field_meta: Dict[str, Any]) -> None:
+        """
+        Fetch team options for team custom fields using the customfield options API.
+
+        Args:
+            project_key: Jira project key
+            field_meta: Field metadata dictionary (modified in-place)
+        """
+        try:
+            for field_id, field_info in field_meta.items():
+                # Skip if already has allowedValues
+                if field_info.get("allowedValues"):
+                    continue
+
+                # Check if this is a team field based on name or custom type
+                field_name = field_info.get("name", "").lower()
+                schema = field_info.get("schema", {})
+                custom_type = schema.get("custom", "")
+
+                if "team" in field_name or "com.atlassian.teams" in custom_type:
+                    logger.info(
+                        f"Attempting to fetch team options for {field_id} ({field_info['name']})"
+                    )
+
+                    # Try multiple API endpoints to get team data
+                    teams = self._fetch_customfield_options(field_id)
+
+                    if teams:
+                        field_info["allowedValues"] = teams
+                        logger.info(
+                            f"Successfully loaded {len(teams)} teams for {field_id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not fetch teams for {field_id} - user will need to enter team ID manually"
+                        )
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch team options: {e}")
+
+    def _fetch_customfield_options(
+        self, field_id: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetch options for a custom field using various Jira API endpoints.
+
+        Args:
+            field_id: Custom field ID (e.g., 'customfield_10912')
+
+        Returns:
+            List of option dictionaries with id, name, and value
+        """
+        try:
+            # Method 1: Try the customfield options endpoint
+            url = f"{self.server_url}/rest/api/2/customFieldOption/{field_id}"
+            response = self.client._session.get(url)
+
+            if response.status_code == 200:
+                data = response.json()
+                options = []
+
+                if isinstance(data, dict) and "values" in data:
+                    for option in data["values"]:
+                        options.append(
+                            {
+                                "id": str(option.get("id")),
+                                "name": option.get("value") or option.get("name"),
+                                "value": option.get("value") or option.get("name"),
+                            }
+                        )
+                elif isinstance(data, list):
+                    for option in data:
+                        options.append(
+                            {
+                                "id": str(option.get("id")),
+                                "name": option.get("value") or option.get("name"),
+                                "value": option.get("value") or option.get("name"),
+                            }
+                        )
+
+                if options:
+                    return options
+
+            # Method 2: Try field-specific API
+            url = f"{self.server_url}/rest/api/2/field/{field_id}/option"
+            response = self.client._session.get(url)
+
+            if response.status_code == 200:
+                data = response.json()
+                options = []
+
+                values = data.get("values", []) if isinstance(data, dict) else data
+                for option in values:
+                    options.append(
+                        {
+                            "id": str(option.get("id")),
+                            "name": option.get("value") or option.get("name"),
+                            "value": option.get("value") or option.get("name"),
+                        }
+                    )
+
+                if options:
+                    return options
+
+            logger.debug(f"No options found for {field_id} via API endpoints")
+            return None
+
+        except Exception as e:
+            logger.debug(f"Failed to fetch options for {field_id}: {e}")
+            return None
 
     def generate_template(self, project_key: str, issue_type: str) -> str:
         """
@@ -471,7 +620,7 @@ class JiraService:
     def _normalize_field_values(self, fields: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normalize field values to Jira API format.
-        Handles complex field types (user, select, multi-select, etc.)
+        Handles complex field types (user, select, multi-select, teams, etc.)
         """
         normalized = {}
 
@@ -479,17 +628,15 @@ class JiraService:
             if value is None:
                 continue
 
-            # Handle user fields
-            if isinstance(value, dict) and "accountId" in value:
+            # Already in correct format (e.g., {"id": "123"} for teams/options)
+            if isinstance(value, dict):
                 normalized[field_id] = value
-            # Handle select fields (single value)
-            elif isinstance(value, str) and field_id.startswith("customfield_"):
-                normalized[field_id] = {"value": value}
             # Handle multi-select fields
             elif isinstance(value, list):
                 normalized[field_id] = [
                     {"value": v} if isinstance(v, str) else v for v in value
                 ]
+            # Simple string/number values
             else:
                 normalized[field_id] = value
 

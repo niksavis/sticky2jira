@@ -101,11 +101,6 @@
                                        placeholder="https://company.atlassian.net" required>
                             </div>
                             <div class="mb-3">
-                                <label for="username" class="form-label">Username/Email</label>
-                                <input type="email" class="form-control" id="username" 
-                                       placeholder="user@company.com" required>
-                            </div>
-                            <div class="mb-3">
                                 <label for="apiToken" class="form-label">API Token</label>
                                 <input type="password" class="form-control" id="apiToken" 
                                        placeholder="Your Jira API token" required>
@@ -115,8 +110,62 @@
                             </div>
                             <div class="mb-3">
                                 <label for="defaultProject" class="form-label">Default Project (optional)</label>
-                                <input type="text" class="form-control" id="defaultProject" 
-                                       placeholder="A935">
+                                <input type="text" class="form-control" id="defaultProject" list="defaultProjectList"
+                                       placeholder="Type to search projects..." autocomplete="off">
+                                <datalist id="defaultProjectList">
+                                </datalist>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Field Defaults (optional)</label>
+                                <div class="form-text mb-2">
+                                    Configure default values for required custom fields per issue type. 
+                                    You can configure multiple issue types (Story, Task, Bug, etc.).
+                                </div>
+                                
+                                <!-- Configured Issue Types List -->
+                                <div id="configuredTypesContainer" class="mb-3" style="display: none;">
+                                    <label class="form-label small">Configured Issue Types:</label>
+                                    <div id="configuredTypesList" class="border rounded p-2 bg-light">
+                                        <!-- Populated by JavaScript -->
+                                    </div>
+                                </div>
+                                
+                                <div class="row mb-2">
+                                    <div class="col-md-6">
+                                        <input type="text" class="form-control form-control-sm" 
+                                               id="fieldDefaultsProject" 
+                                               list="fieldDefaultsProjectList"
+                                               placeholder="Type to search projects..." 
+                                               autocomplete="off">
+                                        <datalist id="fieldDefaultsProjectList">
+                                        </datalist>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <input type="text" class="form-control form-control-sm" 
+                                               id="fieldDefaultsIssueType" 
+                                               list="fieldDefaultsIssueTypeList"
+                                               placeholder="Type issue type..." 
+                                               autocomplete="off">
+                                        <datalist id="fieldDefaultsIssueTypeList">
+                                            <option value="Task">
+                                            <option value="Story">
+                                            <option value="Bug">
+                                            <option value="Epic">
+                                            <option value="Sub-task">
+                                        </datalist>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-primary mb-2" id="loadFieldsBtn">
+                                    Load Fields
+                                </button>
+                                <div id="fieldDefaultsContainer">
+                                    <p class="text-muted small">Click "Load Fields" after selecting project and issue type</p>
+                                </div>
+                                <div class="mt-2" id="saveFieldDefaultsSection" style="display: none;">
+                                    <button type="button" class="btn btn-sm btn-success" id="saveFieldDefaultsBtn">
+                                        Save Field Defaults for This Issue Type
+                                    </button>
+                                </div>
                             </div>
                             <button type="button" class="btn btn-primary" id="testConnectionBtn">
                                 Test Connection
@@ -145,13 +194,15 @@
                             <img id="previewImg" src="" alt="Preview" class="img-fluid" 
                                  style="max-height: 400px;">
                         </div>
-                        <button type="button" class="btn btn-primary" id="uploadImageBtn" disabled>
-                            Upload Image
-                        </button>
-                        <button type="button" class="btn btn-secondary" id="processOcrBtn" 
-                                style="display: none;">
-                            Start OCR Processing
-                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-primary" id="uploadImageBtn" disabled>
+                                Upload Image
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="processOcrBtn" 
+                                    style="display: none;">
+                                Start OCR Processing
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -183,12 +234,16 @@
                     <div class="card-body">
                         <form id="mappingForm">
                             <div class="mb-3">
-                                <label for="mappingProject" class="form-label">Project</label>
-                                <select class="form-select" id="mappingProject" required>
-                                    <option value="">Select project...</option>
-                                </select>
+                                <label for="mappingProject" class="form-label">Project (type to search)</label>
+                                <input type="text" class="form-control" id="mappingProject" list="projectList" 
+                                       placeholder="Type to search projects..." required autocomplete="off">
+                                <datalist id="projectList">
+                                </datalist>
                             </div>
                             <div id="colorMappings"></div>
+                            <hr class="my-4">
+                            <h6>Individual Issues (override if needed)</h6>
+                            <div id="individualMappings" class="mt-3"></div>
                             <button type="submit" class="btn btn-primary">
                                 Save Mappings
                             </button>
@@ -216,6 +271,7 @@
                                     <th>Summary</th>
                                     <th>Description</th>
                                     <th>Confidence</th>
+                                    <th>Issue Key</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>

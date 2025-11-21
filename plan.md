@@ -1,12 +1,43 @@
 # sticky2jira - Image-to-Jira Issue Converter
 
 **Created:** November 21, 2025  
+**Last Updated:** November 21, 2025  
 **Project Location:** `C:\Development\sticky2jira\`  
-**Status:** Phase 1 MVP Complete
+**Status:** Phase 1 MVP Complete ✅ | Phase 2 In Progress
 
 ## Project Overview
 
 A browser-based local application that extracts text from sticky note board images using OCR and creates/updates Jira issues—designed for non-technical users with zero cloud dependencies and no manual JSON editing.
+
+## Current Implementation Status
+
+### ✅ Phase 1 MVP - COMPLETE
+
+- Core infrastructure with automated setup (install.bat, launch.bat)
+- Flask application with WebSocket (SocketIO) support
+- Jira integration with field defaults per issue type (Story, Task, Bug)
+- OCR pipeline using PaddleOCR (100% local processing)
+- Browser UI with 7-tab wizard workflow
+- Issue review with inline editing
+- Import to Jira with real-time progress
+- **Update vs Create logic**: Issues with `issue_key` are updated, not recreated
+- **Issue tracking**: `issue_key` displayed in Issue Review tab with Jira link
+- Encrypted credential storage (Fernet AES-128)
+- Multi-type field defaults configuration UI
+
+### 🚧 Known Limitations (To Be Addressed in Phase 2+)
+
+- No manual region drawing (OCR detection only)
+- No preprocessing presets (auto-detect only)
+- No Quick Fix Grid for bulk corrections
+- No card view (table view only)
+- No bulk operations (select multiple → edit)
+- No session export/import (JSON)
+- No import history viewer
+- No "Add Images" mode (new session only)
+- No visual indicators (🆕/✏️/✅/⚠️) for issue status
+- No CSV error export
+- No retry failed imports
 
 ## Core Requirements
 
@@ -307,12 +338,20 @@ socket.on('import_error', {error});
 
 **Development Order Priority:**
 
-- **Phase 1 (MVP)**: ✅ COMPLETE - Steps 1-4, all 7 tabs functional, Jira connection, OCR processing, color mapping, issue review, import with progress, encrypted credentials
-- **Phase 2 (Advanced OCR)**: Manual region drawing, preprocessing presets, Quick Fix Grid, OCR parameter tuning UI
-- **Phase 3 (Multi-Project)**: Bulk operations, card view, project grouping, undo capability
-- **Phase 4 (Session Management)**: Export/import JSON, import history viewer, "Add Images" mode
-- **Phase 5 (UI Polish)**: Visual indicators (🆕/✏️/✅/⚠️), inline validation, CSV error export
-- **Phase 6 (Optimization)**: Performance tuning, retry failed imports, preprocessing presets
+- **Phase 1 (MVP)**: ✅ **COMPLETE** - Steps 1-4, all 7 tabs functional, Jira connection, OCR processing, color mapping, issue review, import with progress, encrypted credentials, multi-type field defaults, update vs create logic
+- **Phase 2 (Current - OCR Enhancements)**: Manual region drawing, preprocessing presets, Quick Fix Grid, OCR parameter tuning UI
+- **Phase 3 (Multi-Project & Bulk Ops)**: Bulk operations (select rows → edit/delete), card view toggle, project grouping, undo capability
+- **Phase 4 (Session Management)**: Export/import JSON, import history viewer, "Add Images" mode (accumulate from multiple images)
+- **Phase 5 (UI Polish)**: Visual indicators (🆕 new/✏️ update/✅ valid/⚠️ errors), inline validation tooltips, CSV error export
+- **Phase 6 (Advanced Features)**: Retry failed imports, preprocessing presets, performance tuning, field validation against templates
+
+**Next Immediate Priorities (Phase 2):**
+
+1. Manual region drawing on canvas (missed stickies)
+2. Quick Fix Grid (thumbnail + textarea for rapid corrections)
+3. Preprocessing presets (Low Light, High Contrast, Handwriting)
+4. OCR parameter sliders UI (HSV tolerance, min/max size, proximity)
+5. Re-run OCR button with adjusted settings
 
 **Additional Files Created:**
 

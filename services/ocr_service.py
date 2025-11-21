@@ -177,6 +177,10 @@ class OCRService:
                         message=f"Extracted text from {color_name} sticky note",
                     )
 
+        # Remove duplicate/overlapping regions
+        regions = self._remove_duplicates(regions)
+        logger.info(f"After deduplication: {len(regions)} unique regions")
+
         # Spatial linking (find description stickies near summary stickies)
         self._link_regions(regions)
 
@@ -345,6 +349,94 @@ class OCRService:
         )
 
         return thresh
+
+    def _calculate_iou(
+        self, bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]
+    ) -> float:
+        """
+        Calculate Intersection over Union (IoU) for two bounding boxes.
+
+        Args:
+            bbox1: First bounding box (x, y, width, height)
+            bbox2: Second bounding box (x, y, width, height)
+
+        Returns:
+            IoU score between 0 and 1
+        """
+        x1, y1, w1, h1 = bbox1
+        x2, y2, w2, h2 = bbox2
+
+        # Calculate intersection rectangle
+        x_left = max(x1, x2)
+        y_top = max(y1, y2)
+        x_right = min(x1 + w1, x2 + w2)
+        y_bottom = min(y1 + h1, y2 + h2)
+
+        # Check if there's no intersection
+        if x_right < x_left or y_bottom < y_top:
+            return 0.0
+
+        # Calculate areas
+        intersection_area = (x_right - x_left) * (y_bottom - y_top)
+        bbox1_area = w1 * h1
+        bbox2_area = w2 * h2
+        union_area = bbox1_area + bbox2_area - intersection_area
+
+        # Calculate IoU
+        iou = intersection_area / union_area if union_area > 0 else 0.0
+        return iou
+
+    def _remove_duplicates(
+        self, regions: List[StickyRegion], iou_threshold: float = 0.5
+    ) -> List[StickyRegion]:
+        """
+        Remove duplicate regions based on bounding box overlap.
+        When regions overlap significantly (IoU > threshold), keep the one with higher confidence.
+
+        Args:
+            regions: List of StickyRegion objects
+            iou_threshold: IoU threshold for considering regions as duplicates (default: 0.5)
+
+        Returns:
+            List of deduplicated StickyRegion objects
+        """
+        if len(regions) <= 1:
+            return regions
+
+        # Sort regions by confidence (descending)
+        sorted_regions = sorted(regions, key=lambda r: r.confidence, reverse=True)
+
+        # Keep track of regions to remove
+        to_remove = set()
+
+        # Compare each region with others
+        for i, region_a in enumerate(sorted_regions):
+            if i in to_remove:
+                continue
+
+            for j, region_b in enumerate(sorted_regions):
+                if i == j or j in to_remove:
+                    continue
+
+                # Calculate IoU
+                iou = self._calculate_iou(region_a.bbox, region_b.bbox)
+
+                # If significant overlap, mark lower confidence region for removal
+                if iou > iou_threshold:
+                    to_remove.add(j)
+                    logger.debug(
+                        f"Removing duplicate region {region_b.id} (IoU={iou:.2f} with region {region_a.id})"
+                    )
+
+        # Filter out removed regions
+        unique_regions = [r for i, r in enumerate(sorted_regions) if i not in to_remove]
+
+        # Re-assign sequential IDs
+        for new_id, region in enumerate(unique_regions):
+            region.id = new_id
+
+        logger.info(f"Removed {len(to_remove)} duplicate regions out of {len(regions)}")
+        return unique_regions
 
     def _link_regions(self, regions: List[StickyRegion]) -> None:
         """

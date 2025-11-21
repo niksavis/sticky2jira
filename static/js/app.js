@@ -81,6 +81,8 @@ function loadJiraSettings() {
       if (data.success && data.settings) {
         appState.jiraSettings = data.settings;
         populateJiraForm(data.settings);
+        // Load projects to populate default project dropdown
+        loadProjects();
       }
     })
     .catch((error) => console.error("Failed to load Jira settings:", error));
@@ -88,10 +90,33 @@ function loadJiraSettings() {
 
 function populateJiraForm(settings) {
   document.getElementById("serverUrl").value = settings.server_url || "";
-  document.getElementById("username").value = settings.username || "";
   document.getElementById("apiToken").value = settings.api_token || "";
   document.getElementById("defaultProject").value =
     settings.default_project_key || "";
+
+  // Store field defaults in appState for later rendering
+  if (settings.field_defaults) {
+    appState.jiraSettings = appState.jiraSettings || {};
+    appState.jiraSettings.field_defaults = settings.field_defaults;
+  }
+
+  // Auto-populate field defaults project and issue type if saved
+  if (settings.field_defaults_project) {
+    document.getElementById("fieldDefaultsProject").value =
+      settings.field_defaults_project;
+  }
+  if (settings.field_defaults_issue_type) {
+    document.getElementById("fieldDefaultsIssueType").value =
+      settings.field_defaults_issue_type;
+  }
+
+  // Auto-load field defaults if both project and issue type are set
+  if (settings.field_defaults_project && settings.field_defaults_issue_type) {
+    // Wait for projects to load first, then load fields
+    setTimeout(() => {
+      loadFieldDefaults();
+    }, 500);
+  }
 }
 
 function testJiraConnection() {
@@ -131,6 +156,7 @@ function saveJiraSettings(event) {
       if (data.success) {
         appState.jiraSettings = settings;
         showAlert("Settings saved successfully", "success");
+        // Reload projects to update both dropdowns
         loadProjects();
       } else {
         showAlert(`Failed to save settings: ${data.error}`, "danger");
@@ -142,11 +168,47 @@ function saveJiraSettings(event) {
 }
 
 function getJiraFormData() {
+  // Collect field defaults from UI inputs
+  const fieldDefaults = {};
+  document.querySelectorAll(".field-default-input").forEach((input) => {
+    const fieldId = input.dataset.fieldId;
+    const fieldType = input.dataset.fieldType;
+    const value = input.value.trim();
+
+    if (value) {
+      // Handle different field types
+      if (fieldType === "option" || fieldType === "array") {
+        // For select/option fields, value is already the ID
+        if (input.tagName === "SELECT") {
+          const selectedOption = input.options[input.selectedIndex];
+          if (selectedOption && selectedOption.dataset.valueFormat) {
+            // Use the data-value-format to determine structure
+            fieldDefaults[fieldId] = JSON.parse(
+              selectedOption.dataset.valueFormat
+            );
+          } else if (value !== "") {
+            fieldDefaults[fieldId] = { id: value };
+          }
+        } else {
+          fieldDefaults[fieldId] = value;
+        }
+      } else if (fieldType === "number") {
+        fieldDefaults[fieldId] = parseFloat(value);
+      } else {
+        fieldDefaults[fieldId] = value;
+      }
+    }
+  });
+
   return {
     server_url: document.getElementById("serverUrl").value,
-    username: document.getElementById("username").value,
     api_token: document.getElementById("apiToken").value,
     default_project_key: document.getElementById("defaultProject").value,
+    field_defaults: fieldDefaults,
+    field_defaults_project: document.getElementById("fieldDefaultsProject")
+      .value,
+    field_defaults_issue_type: document.getElementById("fieldDefaultsIssueType")
+      .value,
   };
 }
 
@@ -298,20 +360,90 @@ function loadProjects() {
       if (data.success) {
         appState.projects = data.projects;
         populateProjectSelect();
+
+        if (data.projects.length === 0) {
+          showAlert(
+            "No Jira projects found. Please check your Jira connection.",
+            "warning"
+          );
+        }
+      } else {
+        showAlert(`Failed to load projects: ${data.error}`, "danger");
+        // Clear project select on error
+        const input = document.getElementById("mappingProject");
+        const datalist = document.getElementById("projectList");
+        input.value = "";
+        input.placeholder = "Jira not configured - go to Setup tab";
+        datalist.innerHTML = "";
       }
     })
-    .catch((error) => console.error("Failed to load projects:", error));
+    .catch((error) => {
+      console.error("Failed to load projects:", error);
+      showAlert(
+        "Failed to load projects. Please configure Jira connection in Setup tab.",
+        "danger"
+      );
+      const input = document.getElementById("mappingProject");
+      const datalist = document.getElementById("projectList");
+      input.value = "";
+      input.placeholder = "Jira not configured - go to Setup tab";
+      datalist.innerHTML = "";
+    });
 }
 
 function populateProjectSelect() {
-  const select = document.getElementById("mappingProject");
-  select.innerHTML = '<option value="">Select project...</option>';
+  const mappingInput = document.getElementById("mappingProject");
+  const mappingDatalist = document.getElementById("projectList");
+  const defaultInput = document.getElementById("defaultProject");
+  const defaultDatalist = document.getElementById("defaultProjectList");
+  const fieldDefaultsInput = document.getElementById("fieldDefaultsProject");
+  const fieldDefaultsDatalist = document.getElementById(
+    "fieldDefaultsProjectList"
+  );
+
+  mappingDatalist.innerHTML = "";
+  if (defaultDatalist) {
+    defaultDatalist.innerHTML = "";
+  }
+  if (fieldDefaultsDatalist) {
+    fieldDefaultsDatalist.innerHTML = "";
+  }
+
   appState.projects.forEach((project) => {
-    const option = document.createElement("option");
-    option.value = project.key;
-    option.textContent = `${project.key} - ${project.name}`;
-    select.appendChild(option);
+    // Populate mapping tab datalist
+    const mappingOption = document.createElement("option");
+    mappingOption.value = project.key;
+    mappingOption.textContent = `${project.key} - ${project.name}`;
+    mappingDatalist.appendChild(mappingOption);
+
+    // Populate default project datalist in setup tab
+    if (defaultDatalist) {
+      const defaultOption = document.createElement("option");
+      defaultOption.value = project.key;
+      defaultOption.textContent = `${project.key} - ${project.name}`;
+      defaultDatalist.appendChild(defaultOption);
+    }
+
+    // Populate field defaults project datalist
+    if (fieldDefaultsDatalist) {
+      const fieldDefaultOption = document.createElement("option");
+      fieldDefaultOption.value = project.key;
+      fieldDefaultOption.textContent = `${project.key} - ${project.name}`;
+      fieldDefaultsDatalist.appendChild(fieldDefaultOption);
+    }
   });
+
+  // Auto-select default project in mapping tab if configured
+  if (appState.jiraSettings && appState.jiraSettings.default_project_key) {
+    const defaultProject = appState.projects.find(
+      (p) => p.key === appState.jiraSettings.default_project_key
+    );
+    if (defaultProject) {
+      mappingInput.value = defaultProject.key;
+      // Trigger issue types loading for default project
+      loadIssueTypes(defaultProject.key);
+    }
+  }
 }
 
 function loadIssueTypes(projectKey) {
@@ -328,46 +460,143 @@ function loadIssueTypes(projectKey) {
 
 function renderColorMappings() {
   const container = document.getElementById("colorMappings");
+  const individualContainer = document.getElementById("individualMappings");
   const projectKey = document.getElementById("mappingProject").value;
 
   if (!projectKey || !appState.issueTypes[projectKey]) {
     container.innerHTML =
       '<p class="text-muted">Select a project to configure mappings.</p>';
+    individualContainer.innerHTML = "";
     return;
   }
 
-  const uniqueColors = [
-    ...new Set(
-      appState.ocrRegions.map((r) => ({
-        hex: r.color_hex,
-        name: r.color_name,
-      }))
-    ),
+  // Get unique colors using Set based on hex value
+  const uniqueColorHexes = [
+    ...new Set(appState.ocrRegions.map((r) => r.color_hex)),
   ];
 
-  let html = "";
-  uniqueColors.forEach((color) => {
-    html += `
-            <div class="color-mapping-row">
-                <span class="color-badge" style="background-color: ${
-                  color.hex
-                };"></span>
-                <label>${color.name}</label>
-                <select class="form-select color-mapping-select" data-color="${
-                  color.hex
-                }">
-                    <option value="">Select issue type...</option>
-                    ${appState.issueTypes[projectKey]
-                      .map(
-                        (it) => `<option value="${it.name}">${it.name}</option>`
-                      )
-                      .join("")}
-                </select>
-            </div>
-        `;
+  console.log("Total regions:", appState.ocrRegions.length);
+  console.log("Unique color hexes:", uniqueColorHexes);
+
+  // Create color map with unique colors only
+  const colorMap = new Map();
+  uniqueColorHexes.forEach((hex) => {
+    // Find first region with this color to get the name
+    const region = appState.ocrRegions.find((r) => r.color_hex === hex);
+    if (region) {
+      colorMap.set(hex, region.color_name || "Unknown");
+    }
   });
 
-  container.innerHTML = html;
+  console.log("Color map entries:", colorMap.size);
+
+  // Render color-to-issue-type mappings
+  let colorHtml = "<h6>Color to Issue Type Mapping</h6>";
+  colorMap.forEach((name, hex) => {
+    colorHtml += `
+      <div class="color-mapping-row mb-2">
+        <span class="color-badge" style="background-color: ${hex};"></span>
+        <label class="me-2">${name}</label>
+        <select class="form-select color-mapping-select" data-color="${hex}" style="max-width: 300px;">
+          <option value="">Select issue type...</option>
+          ${appState.issueTypes[projectKey]
+            .map((it) => `<option value="${it.name}">${it.name}</option>`)
+            .join("")}
+        </select>
+      </div>
+    `;
+  });
+  container.innerHTML = colorHtml;
+
+  // Add change listeners to auto-apply mappings to all regions with that color
+  document.querySelectorAll(".color-mapping-select").forEach((select) => {
+    select.addEventListener("change", (e) => {
+      const color = e.target.dataset.color;
+      const issueType = e.target.value;
+
+      // Apply this issue type to all regions with this color
+      appState.ocrRegions.forEach((region) => {
+        if (region.color_hex === color) {
+          region.issue_type = issueType;
+        }
+      });
+
+      // Refresh individual mappings to show the updated selections
+      renderIndividualMappings();
+    });
+  });
+
+  // Render individual issue mappings
+  renderIndividualMappings();
+}
+
+function renderIndividualMappings() {
+  const individualContainer = document.getElementById("individualMappings");
+  const projectKey = document.getElementById("mappingProject").value;
+
+  if (!projectKey || !appState.issueTypes[projectKey]) {
+    return;
+  }
+
+  // Collect current color mappings
+  const colorMappings = {};
+  document.querySelectorAll(".color-mapping-select").forEach((select) => {
+    const color = select.dataset.color;
+    const issueType = select.value;
+    if (issueType) {
+      colorMappings[color] = issueType;
+    }
+  });
+
+  // Render individual regions with inherited or overridden issue types
+  let html =
+    '<div class="table-responsive"><table class="table table-sm table-striped"><thead><tr>';
+  html +=
+    "<th>Color</th><th>Text Preview</th><th>Issue Type</th></tr></thead><tbody>";
+
+  appState.ocrRegions.forEach((region, index) => {
+    const inheritedType = colorMappings[region.color_hex] || "";
+    const currentType = region.issue_type || inheritedType;
+    const textPreview =
+      (region.text || "").substring(0, 60) +
+      (region.text && region.text.length > 60 ? "..." : "");
+
+    html += `
+      <tr>
+        <td><span class="color-badge" style="background-color: ${
+          region.color_hex
+        };"></span></td>
+        <td>${textPreview}</td>
+        <td>
+          <select class="form-select form-select-sm individual-mapping-select" data-index="${index}" style="min-width: 150px;">
+            <option value="">Select issue type...</option>
+            ${appState.issueTypes[projectKey]
+              .map(
+                (it) =>
+                  `<option value="${it.name}" ${
+                    it.name === currentType ? "selected" : ""
+                  }>${it.name}</option>`
+              )
+              .join("")}
+          </select>
+        </td>
+      </tr>
+    `;
+  });
+
+  html += "</tbody></table></div>";
+  individualContainer.innerHTML = html;
+
+  // Add change listeners for individual overrides
+  document.querySelectorAll(".individual-mapping-select").forEach((select) => {
+    select.addEventListener("change", (e) => {
+      const index = parseInt(e.target.dataset.index);
+      const issueType = e.target.value;
+      if (appState.ocrRegions[index]) {
+        appState.ocrRegions[index].issue_type = issueType;
+      }
+    });
+  });
 }
 
 // ============================================================================
@@ -420,6 +649,55 @@ function switchTab(tabId) {
   tab.show();
 }
 
+function renderImportResults(data) {
+  const container = document.getElementById("importResults");
+
+  // Build results HTML
+  let html = `
+    <div class="alert alert-success">
+      <h5 class="alert-heading">Import Complete!</h5>
+      <p class="mb-0">
+        Created: <strong>${data.created || 0}</strong> | 
+        Updated: <strong>${data.updated || 0}</strong> | 
+        Failed: <strong>${data.failed || 0}</strong> | 
+        Total: <strong>${data.total || 0}</strong>
+      </p>
+    </div>
+  `;
+
+  // Show results if available
+  if (data.results && data.results.length > 0) {
+    html +=
+      '<div class="table-responsive"><table class="table table-striped table-sm">';
+    html +=
+      "<thead><tr><th>Status</th><th>Issue Key</th><th>Summary</th><th>Error</th></tr></thead><tbody>";
+
+    data.results.forEach((result) => {
+      const statusBadge = result.success
+        ? '<span class="badge bg-success">✓ Success</span>'
+        : '<span class="badge bg-danger">✗ Failed</span>';
+
+      const issueKeyLink = result.issue_key
+        ? `<a href="${appState.jiraSettings.server_url}/browse/${result.issue_key}" target="_blank">${result.issue_key}</a>`
+        : "-";
+
+      const error = result.error ? escapeHtml(result.error) : "-";
+      const summary = escapeHtml(result.summary || "Unknown");
+
+      html += `<tr>
+        <td>${statusBadge}</td>
+        <td>${issueKeyLink}</td>
+        <td>${summary}</td>
+        <td class="text-danger small">${error}</td>
+      </tr>`;
+    });
+
+    html += "</tbody></table></div>";
+  }
+
+  container.innerHTML = html;
+}
+
 function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
@@ -461,12 +739,72 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("proceedToMappingBtn")
     .addEventListener("click", () => {
       switchTab("mapping-tab");
+      // Load projects when navigating to mapping tab
+      loadProjects();
+    });
+
+  // Mapping tab - listen for tab shown event to load projects
+  document
+    .getElementById("mapping-tab")
+    .addEventListener("shown.bs.tab", () => {
+      // Load projects if not already loaded
+      if (!appState.projects || appState.projects.length === 0) {
+        loadProjects();
+      }
     });
 
   // Mapping tab
   document.getElementById("mappingProject").addEventListener("change", (e) => {
     loadIssueTypes(e.target.value);
   });
+
+  // Mapping form submit - prevent default and show success message
+  document.getElementById("mappingForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    showAlert("Mappings saved successfully!", "success", 3000);
+  });
+
+  // Proceed to Issue Review button
+  document
+    .getElementById("proceedToIssuesBtn")
+    .addEventListener("click", () => {
+      applyColorMappingsAndProceed();
+    });
+
+  // Proceed to Import button
+  document
+    .getElementById("proceedToImportBtn")
+    .addEventListener("click", () => {
+      switchTab("import-tab");
+      updateImportSummary();
+    });
+
+  // Start Import button
+  document.getElementById("startImportBtn").addEventListener("click", () => {
+    startJiraImport();
+  });
+
+  // Load Fields button for field defaults
+  document.getElementById("loadFieldsBtn").addEventListener("click", () => {
+    loadFieldDefaults();
+  });
+
+  // Save Field Defaults button
+  document
+    .getElementById("saveFieldDefaultsBtn")
+    .addEventListener("click", () => {
+      saveCurrentFieldDefaults();
+    });
+
+  // Populate field defaults project dropdown when projects load
+  document
+    .getElementById("fieldDefaultsProject")
+    .addEventListener("change", () => {
+      const projectKey = document.getElementById("fieldDefaultsProject").value;
+      if (projectKey) {
+        // Load issue types for the selected project could go here
+      }
+    });
 
   // New session button
   document.getElementById("newSessionBtn").addEventListener("click", () => {
@@ -483,3 +821,407 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
+
+function applyColorMappingsAndProceed() {
+  const projectKey = document.getElementById("mappingProject").value;
+
+  if (!projectKey) {
+    showAlert("Please select a project first", "warning");
+    return;
+  }
+
+  // Validate that all regions have issue types assigned (either from color mapping or individual override)
+  const unmappedRegions = [];
+  appState.ocrRegions.forEach((region, index) => {
+    if (!region.issue_type) {
+      unmappedRegions.push(index + 1);
+    }
+  });
+
+  if (unmappedRegions.length > 0) {
+    showAlert(
+      `Please assign issue types to all colors in the mapping section above. ${unmappedRegions.length} issue(s) still need mapping.`,
+      "warning"
+    );
+    return;
+  }
+
+  // Set project key for all regions
+  appState.ocrRegions.forEach((region) => {
+    region.project_key = projectKey;
+  });
+
+  // Navigate to review tab
+  switchTab("issues-tab");
+
+  // Populate review table
+  populateReviewTable();
+}
+
+function populateReviewTable() {
+  const tbody = document.querySelector("#issuesTable tbody");
+  tbody.innerHTML = "";
+
+  appState.ocrRegions.forEach((region, index) => {
+    const issueKeyCell = region.issue_key
+      ? `<a href="${appState.jiraSettings?.server_url || ""}/browse/${
+          region.issue_key
+        }" target="_blank" class="badge bg-success">${region.issue_key}</a>`
+      : '<span class="badge bg-secondary">Not imported</span>';
+
+    const row = tbody.insertRow();
+    row.innerHTML = `
+      <td>${index + 1}</td>
+      <td><span class="color-badge" style="background-color: ${
+        region.color_hex
+      };"></span></td>
+      <td>${region.issue_type || "N/A"}</td>
+      <td contenteditable="true" data-field="summary" data-id="${index}">${
+      region.text || ""
+    }</td>
+      <td contenteditable="true" data-field="description" data-id="${index}">${
+      region.linked_text || ""
+    }</td>
+      <td>${Math.round(region.confidence || 0)}%</td>
+      <td>${issueKeyCell}</td>
+      <td>
+        <button class="btn btn-sm btn-danger" onclick="deleteIssue(${index})">Delete</button>
+      </td>
+    `;
+  });
+
+  // Add inline editing handlers
+  document
+    .querySelectorAll("#issuesTable [contenteditable]")
+    .forEach((cell) => {
+      cell.addEventListener("blur", (e) => {
+        const id = parseInt(e.target.dataset.id);
+        const field = e.target.dataset.field;
+        const value = e.target.textContent;
+        if (appState.ocrRegions[id]) {
+          if (field === "summary") {
+            appState.ocrRegions[id].text = value;
+          } else if (field === "description") {
+            appState.ocrRegions[id].linked_text = value;
+          }
+        }
+      });
+    });
+}
+
+function deleteIssue(index) {
+  if (confirm("Delete this issue?")) {
+    appState.ocrRegions.splice(index, 1);
+    populateReviewTable();
+  }
+}
+
+function updateImportSummary() {
+  const issueCount = appState.ocrRegions.length;
+  document.getElementById("issueCount").textContent = issueCount;
+}
+
+function startJiraImport() {
+  if (appState.ocrRegions.length === 0) {
+    showAlert("No issues to import", "warning");
+    return;
+  }
+
+  const importBtn = document.getElementById("startImportBtn");
+  importBtn.disabled = true;
+  importBtn.textContent = "Importing...";
+
+  showProgress(0, "Starting Jira import...");
+
+  // Prepare issues data
+  const issues = appState.ocrRegions.map((region, index) => ({
+    id: region.id, // Database ID if available
+    issue_key: region.issue_key, // Existing Jira key if already imported
+    project_key: region.project_key,
+    issue_type: region.issue_type,
+    summary: region.text || "No summary",
+    description: region.linked_text || "",
+    color: region.color_hex,
+  }));
+
+  fetch("/api/jira/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ issues: issues }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        const message =
+          data.failed > 0
+            ? `Import complete! Created ${data.created}, updated ${
+                data.updated || 0
+              }, ${data.failed} failed.`
+            : `Successfully imported to Jira! Created ${
+                data.created
+              }, updated ${data.updated || 0}.`;
+
+        const alertType = data.failed > 0 ? "warning" : "success";
+        showAlert(message, alertType);
+        showProgress(100, "Import complete!");
+
+        // Update regions with issue keys if returned
+        if (data.results) {
+          data.results.forEach((result, index) => {
+            if (result.issue_key && appState.ocrRegions[index]) {
+              appState.ocrRegions[index].issue_key = result.issue_key;
+            }
+          });
+          // Refresh the review table to show updated issue keys
+          populateReviewTable();
+        }
+
+        // Show detailed errors if any failed
+        if (data.failed > 0 && data.results) {
+          const errors = data.results
+            .filter((r) => !r.success)
+            .map((r) => `• ${r.summary}: ${r.error}`)
+            .join("\n");
+          console.error("Import errors:\n" + errors);
+          showAlert(
+            `${data.failed} issue(s) failed. Check console for details.`,
+            "danger",
+            10000
+          );
+        }
+      } else {
+        showAlert(`Import failed: ${data.error}`, "danger");
+      }
+    })
+    .catch((error) => {
+      showAlert(`Import error: ${error.message}`, "danger");
+    })
+    .finally(() => {
+      importBtn.disabled = false;
+      importBtn.textContent = "Start Import";
+      hideProgress();
+    });
+}
+
+function loadFieldDefaults() {
+  const projectKey = document.getElementById("fieldDefaultsProject").value;
+  const issueType = document.getElementById("fieldDefaultsIssueType").value;
+
+  if (!projectKey || !issueType) {
+    showAlert("Please select both project and issue type", "warning");
+    return;
+  }
+
+  showAlert("Loading fields...", "info", 2000);
+
+  fetch(`/api/jira/fields?project_key=${projectKey}&issue_type=${issueType}`)
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        renderFieldDefaultsUI(data.fields);
+
+        // Load existing defaults for this project/issue type if they exist
+        return fetch(`/api/field-defaults/${projectKey}/${issueType}`);
+      } else {
+        showAlert(`Failed to load fields: ${data.error}`, "danger");
+        throw new Error(data.error);
+      }
+    })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success && data.field_defaults) {
+        // Populate existing values
+        for (const [fieldId, fieldValue] of Object.entries(
+          data.field_defaults
+        )) {
+          const input = document.querySelector(`[data-field-id="${fieldId}"]`);
+          if (input) {
+            if (input.tagName === "SELECT") {
+              const valueToSelect = fieldValue.id || fieldValue;
+              input.value = valueToSelect;
+            } else {
+              input.value = fieldValue;
+            }
+          }
+        }
+        showAlert(
+          `Loaded existing configuration for ${issueType}`,
+          "info",
+          3000
+        );
+      }
+      // Show save button
+      document.getElementById("saveFieldDefaultsSection").style.display =
+        "block";
+    })
+    .catch((error) => {
+      showAlert(`Error loading fields: ${error.message}`, "danger");
+    });
+}
+
+function saveCurrentFieldDefaults() {
+  const projectKey = document.getElementById("fieldDefaultsProject").value;
+  const issueType = document.getElementById("fieldDefaultsIssueType").value;
+
+  if (!projectKey || !issueType) {
+    showAlert("Please select both project and issue type", "warning");
+    return;
+  }
+
+  // Collect field defaults from UI
+  const fieldDefaults = {};
+  document.querySelectorAll(".field-default-input").forEach((input) => {
+    const fieldId = input.dataset.fieldId;
+    const fieldType = input.dataset.fieldType;
+    const value = input.value.trim();
+
+    if (value) {
+      // Handle different field types
+      if (fieldType === "option" || fieldType === "array") {
+        if (input.tagName === "SELECT") {
+          const selectedOption = input.options[input.selectedIndex];
+          if (selectedOption && selectedOption.dataset.valueFormat) {
+            fieldDefaults[fieldId] = JSON.parse(
+              selectedOption.dataset.valueFormat
+            );
+          } else if (value !== "") {
+            fieldDefaults[fieldId] = { id: value };
+          }
+        } else {
+          fieldDefaults[fieldId] = value;
+        }
+      } else if (fieldType === "number") {
+        fieldDefaults[fieldId] = parseFloat(value);
+      } else {
+        fieldDefaults[fieldId] = value;
+      }
+    }
+  });
+
+  // Save to database
+  fetch("/api/field-defaults", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      project_key: projectKey,
+      issue_type: issueType,
+      field_defaults: fieldDefaults,
+    }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        showAlert(
+          `Field defaults saved for ${projectKey}/${issueType}`,
+          "success",
+          3000
+        );
+        loadConfiguredIssueTypes();
+      } else {
+        showAlert(`Failed to save: ${data.error}`, "danger");
+      }
+    })
+    .catch((error) => {
+      showAlert(`Save error: ${error.message}`, "danger");
+    });
+}
+
+function loadConfiguredIssueTypes() {
+  const projectKey = document.getElementById("fieldDefaultsProject").value;
+  if (!projectKey) return;
+
+  fetch(`/api/field-defaults?project_key=${projectKey}`)
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success && data.configs && data.configs.length > 0) {
+        const container = document.getElementById("configuredTypesContainer");
+        const list = document.getElementById("configuredTypesList");
+
+        let html = "<ul class='list-unstyled mb-0'>";
+        data.configs.forEach((config) => {
+          html += `<li class='small'><span class='badge bg-success me-2'>${
+            config.issue_type
+          }</span> (${Object.keys(config.field_defaults).length} fields)</li>`;
+        });
+        html += "</ul>";
+
+        list.innerHTML = html;
+        container.style.display = "block";
+      }
+    });
+}
+
+function renderFieldDefaultsUI(fields) {
+  const container = document.getElementById("fieldDefaultsContainer");
+
+  if (fields.length === 0) {
+    container.innerHTML =
+      '<p class="text-muted small">No additional fields found for this issue type.</p>';
+    return;
+  }
+
+  let html =
+    '<div class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">';
+
+  // Get existing field defaults
+  const existingDefaults = appState.jiraSettings?.field_defaults || {};
+
+  fields.forEach((field) => {
+    const fieldId = field.id;
+    const fieldName = field.name;
+    const isRequired = field.required;
+    const existingValue = existingDefaults[fieldId];
+
+    html += `<div class="mb-2 pb-2 border-bottom">`;
+    html += `<label class="form-label small mb-1"><strong>${fieldName}</strong>`;
+    if (isRequired) {
+      html += ' <span class="badge bg-danger">Required</span>';
+    }
+    html += `</label>`;
+
+    // Render input based on field type and allowed values
+    if (field.allowedValues && field.allowedValues.length > 0) {
+      // Dropdown for fields with allowed values
+      html += `<select class="form-select form-select-sm field-default-input" 
+                      data-field-id="${fieldId}" 
+                      data-field-type="${field.type || "option"}">`;
+      html += `<option value="">-- Select ${fieldName} --</option>`;
+
+      field.allowedValues.forEach((allowedValue) => {
+        const valueId = allowedValue.id || allowedValue.value;
+        const valueName = allowedValue.name || allowedValue.value;
+        const isSelected =
+          existingValue &&
+          (existingValue.id === valueId || existingValue === valueId);
+
+        html += `<option value="${valueId}" 
+                        data-value-format='${JSON.stringify({ id: valueId })}'
+                        ${isSelected ? "selected" : ""}>
+                  ${valueName}
+                 </option>`;
+      });
+
+      html += `</select>`;
+    } else {
+      // Text input for other fields
+      const inputType = field.type === "number" ? "number" : "text";
+      const value = existingValue || "";
+      html += `<input type="${inputType}" 
+                      class="form-control form-control-sm field-default-input" 
+                      data-field-id="${fieldId}"
+                      data-field-type="${field.type || "string"}"
+                      value="${value}"
+                      placeholder="Enter ${fieldName}">`;
+    }
+
+    html += `<div class="form-text" style="font-size: 0.75rem;">Field ID: ${fieldId}`;
+    if (fieldId === "reporter") {
+      html += ` <span class="text-info">• If empty, defaults to API token user</span>`;
+    }
+    html += `</div>`;
+    html += `</div>`;
+  });
+
+  html += "</div>";
+  container.innerHTML = html;
+}

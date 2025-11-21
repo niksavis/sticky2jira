@@ -14,6 +14,9 @@ from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+# Import services
+from services import session_manager
+
 # Load environment variables
 load_dotenv()
 
@@ -147,11 +150,88 @@ def get_jira_projects():
     try:
         app.logger.info("Fetching Jira projects")
 
-        # TODO: Implement project listing using jira_service
+        # Load Jira settings
+        settings = session_manager.get_jira_settings()
+        if not settings:
+            return jsonify(
+                {"success": False, "error": "Jira connection not configured"}
+            ), 400
 
-        return jsonify({"success": True, "projects": []})
+        # Initialize Jira service
+        from services.jira_service import JiraService
+
+        jira_svc = JiraService(
+            server_url=settings["server_url"],
+            api_token=settings["api_token"],
+        )
+
+        # Get projects
+        projects = jira_svc.get_projects()
+        app.logger.info(f"Retrieved {len(projects)} projects")
+
+        return jsonify({"success": True, "projects": projects})
     except Exception as e:
         app.logger.error(f"Failed to fetch Jira projects: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/field-defaults", methods=["GET"])
+def get_all_field_defaults():
+    """Get all field defaults configurations."""
+    try:
+        project_key = request.args.get("project_key")
+        configs = session_manager.get_all_field_defaults_configs(project_key)
+        return jsonify({"success": True, "configs": configs})
+    except Exception as e:
+        app.logger.error(f"Failed to fetch field defaults: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/field-defaults/<project_key>/<issue_type>", methods=["GET"])
+def get_field_defaults(project_key, issue_type):
+    """Get field defaults for a specific project/issue type."""
+    try:
+        defaults = session_manager.get_field_defaults_config(project_key, issue_type)
+        return jsonify({"success": True, "field_defaults": defaults})
+    except Exception as e:
+        app.logger.error(f"Failed to fetch field defaults: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/field-defaults", methods=["POST"])
+def save_field_defaults():
+    """Save field defaults configuration for a project/issue type."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        project_key = data.get("project_key")
+        issue_type = data.get("issue_type")
+        field_defaults = data.get("field_defaults", {})
+
+        if not project_key or not issue_type:
+            return jsonify(
+                {"success": False, "error": "project_key and issue_type required"}
+            ), 400
+
+        session_manager.save_field_defaults_config(
+            project_key, issue_type, field_defaults
+        )
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error(f"Failed to save field defaults: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/field-defaults/<project_key>/<issue_type>", methods=["DELETE"])
+def delete_field_defaults(project_key, issue_type):
+    """Delete field defaults configuration."""
+    try:
+        session_manager.delete_field_defaults_config(project_key, issue_type)
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.error(f"Failed to delete field defaults: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -161,11 +241,100 @@ def get_issue_types(project_key):
     try:
         app.logger.info(f"Fetching issue types for project {project_key}")
 
-        # TODO: Implement issue type discovery using jira_service
+        # Load Jira settings
+        settings = session_manager.get_jira_settings()
+        if not settings:
+            return jsonify(
+                {"success": False, "error": "Jira connection not configured"}
+            ), 400
 
-        return jsonify({"success": True, "issue_types": []})
+        # Initialize Jira service
+        from services.jira_service import JiraService
+
+        jira_svc = JiraService(
+            server_url=settings["server_url"],
+            api_token=settings["api_token"],
+        )
+
+        # Get issue types for project
+        issue_types = jira_svc.get_issue_types(project_key)
+        app.logger.info(f"Retrieved {len(issue_types)} issue types for {project_key}")
+
+        return jsonify({"success": True, "issue_types": issue_types})
     except Exception as e:
         app.logger.error(f"Failed to fetch issue types: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/jira/fields", methods=["GET"])
+def get_jira_fields():
+    """Get all Jira fields with metadata for field defaults configuration."""
+    try:
+        project_key = request.args.get("project_key")
+        issue_type = request.args.get("issue_type", "Task")
+
+        if not project_key:
+            return jsonify(
+                {"success": False, "error": "project_key parameter required"}
+            ), 400
+
+        app.logger.info(f"Fetching fields for {project_key}/{issue_type}")
+
+        # Load Jira settings
+        settings = session_manager.get_jira_settings()
+        if not settings:
+            return jsonify(
+                {"success": False, "error": "Jira connection not configured"}
+            ), 400
+
+        # Initialize Jira service
+        from services.jira_service import JiraService
+
+        jira_svc = JiraService(
+            server_url=settings["server_url"],
+            api_token=settings["api_token"],
+        )
+
+        # Get create metadata for the project/issue type
+        field_meta = jira_svc.get_create_fields(project_key, issue_type)
+
+        # Format fields for UI
+        formatted_fields = []
+        for field_id, field_info in field_meta.items():
+            # Skip standard fields that we already handle
+            if field_id in ["project", "issuetype", "summary", "description"]:
+                continue
+
+            field_data = {
+                "id": field_id,
+                "name": field_info.get("name"),
+                "required": field_info.get("required", False),
+                "type": field_info.get("schema", {}).get("type"),
+                "custom": field_info.get("schema", {}).get("custom"),
+            }
+
+            # Extract allowed values if present (already converted to dicts)
+            allowed_values = field_info.get("allowedValues")
+            if allowed_values:
+                field_data["allowedValues"] = []
+                for val in allowed_values:
+                    field_data["allowedValues"].append(
+                        {
+                            "id": val.get("id"),
+                            "name": val.get("name") or val.get("value"),
+                            "value": val.get("value"),
+                        }
+                    )
+
+            formatted_fields.append(field_data)
+
+        app.logger.info(
+            f"Retrieved {len(formatted_fields)} fields for {project_key}/{issue_type}"
+        )
+
+        return jsonify({"success": True, "fields": formatted_fields})
+    except Exception as e:
+        app.logger.error(f"Failed to fetch fields: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -275,12 +444,210 @@ def load_color_mapping():
 
         return jsonify({"success": True, "mappings": {}})
     except Exception as e:
-        app.logger.error(f"Failed to load mappings: {str(e)}", exc_info=True)
+        app.logger.error(f"Failed to save mappings: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ============================================================================
-# API Endpoints - Issues Management
+# API Endpoints - Jira Import
+# ============================================================================
+
+
+@app.route("/api/jira/import", methods=["POST"])
+def import_to_jira():
+    """Import issues to Jira."""
+    try:
+        data = request.json
+        if not data or "issues" not in data:
+            return jsonify({"success": False, "error": "No issues provided"}), 400
+
+        issues = data["issues"]
+        app.logger.info(f"Starting import of {len(issues)} issues to Jira")
+
+        # Get Jira settings
+        settings = session_manager.get_jira_settings()
+        if not settings:
+            return (
+                jsonify({"success": False, "error": "Jira not configured"}),
+                400,
+            )
+
+        # Initialize Jira service
+        from services.jira_service import JiraService
+
+        jira_service = JiraService(
+            server_url=settings["server_url"], api_token=settings["api_token"]
+        )
+
+        # Get all field defaults configurations for efficient lookup
+        all_configs = session_manager.get_all_field_defaults_configs()
+        field_defaults_by_type = {
+            f"{config['project_key']}_{config['issue_type']}": config["field_defaults"]
+            for config in all_configs
+        }
+
+        # Import issues
+        results = []
+        created_count = 0
+        updated_count = 0
+        failed_count = 0
+
+        for idx, issue in enumerate(issues):
+            try:
+                # Emit progress
+                socketio.emit(
+                    "import_progress",
+                    {
+                        "percent": int((idx / len(issues)) * 100),
+                        "current": idx + 1,
+                        "total": len(issues),
+                        "status": "processing",
+                        "message": f"Importing issue {idx + 1}/{len(issues)}...",
+                    },
+                )
+
+                # Build issue data - start with required fields
+                issue_data = {
+                    "project": {"key": issue["project_key"]},
+                    "summary": issue["summary"] or "No summary",
+                    "issuetype": {"name": issue["issue_type"]},
+                }
+
+                # Add description if provided
+                description = issue.get("description", "").strip()
+                if description:
+                    issue_data["description"] = description
+
+                # Apply field defaults for this specific project/issue type combination
+                lookup_key = f"{issue['project_key']}_{issue['issue_type']}"
+                field_defaults = field_defaults_by_type.get(lookup_key, {})
+
+                if field_defaults:
+                    for field_id, field_value in field_defaults.items():
+                        if field_id not in issue_data:  # Don't override existing values
+                            issue_data[field_id] = field_value
+                    app.logger.info(
+                        f"Applied field defaults for {issue['project_key']}/{issue['issue_type']}"
+                    )
+                else:
+                    app.logger.warning(
+                        f"No field defaults configured for {issue['project_key']}/{issue['issue_type']}"
+                    )
+
+                # Check if issue already has a Jira key (update vs create)
+                existing_issue_key = issue.get("issue_key")
+                issue_id = issue.get("id")
+
+                if existing_issue_key:
+                    # Update existing issue
+                    jira_service.update_issue(
+                        issue_key=existing_issue_key,
+                        summary=issue_data.get("summary"),
+                        description=issue_data.get("description"),
+                        additional_fields={
+                            k: v
+                            for k, v in issue_data.items()
+                            if k
+                            not in ["project", "summary", "issuetype", "description"]
+                        },
+                    )
+                    issue_key = existing_issue_key
+                    updated_count += 1
+                    status = "updated"
+                    app.logger.info(f"Updated issue {issue_key}")
+                else:
+                    # Create new issue
+                    created_issue = jira_service.client.create_issue(fields=issue_data)
+                    issue_key = created_issue.key
+
+                    # Save issue_key to database
+                    if issue_id:
+                        session_manager.update_issue_key(issue_id, issue_key)
+                        app.logger.info(
+                            f"Saved issue_key {issue_key} to database for issue {issue_id}"
+                        )
+
+                    created_count += 1
+                    status = "created"
+                    app.logger.info(f"Created issue {issue_key}")
+
+                results.append(
+                    {
+                        "success": True,
+                        "issue_key": issue_key,
+                        "summary": issue["summary"],
+                        "status": status,
+                    }
+                )
+
+            except Exception as e:
+                error_msg = str(e)
+                app.logger.error(f"Failed to create issue: {error_msg}")
+
+                # Try to extract meaningful error from Jira API response
+                try:
+                    import json as json_lib
+
+                    json_start = error_msg.find("{")
+                    if json_start != -1:
+                        error_payload = json_lib.loads(error_msg[json_start:])
+                        errors = error_payload.get("errors", {})
+                        if errors:
+                            error_msg = "; ".join(
+                                [f"{k}: {v}" for k, v in errors.items()]
+                            )
+                        elif error_payload.get("errorMessages"):
+                            error_msg = "; ".join(error_payload["errorMessages"])
+                except Exception:
+                    pass
+
+                results.append(
+                    {
+                        "success": False,
+                        "error": error_msg,
+                        "summary": issue.get("summary", "Unknown"),
+                    }
+                )
+                failed_count += 1
+
+        # Final progress update
+        socketio.emit(
+            "import_progress",
+            {
+                "percent": 100,
+                "current": len(issues),
+                "total": len(issues),
+                "status": "complete",
+                "message": f"Import complete! Created {created_count}, updated {updated_count}, {failed_count} failed.",
+                "created": created_count,
+                "updated": updated_count,
+                "failed": failed_count,
+                "results": results,
+            },
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "created": created_count,
+                "updated": updated_count,
+                "failed": failed_count,
+                "total": len(issues),
+                "results": results,
+            }
+        )
+
+    except Exception as e:
+        app.logger.error(f"Import failed: {str(e)}", exc_info=True)
+        socketio.emit(
+            "import_progress",
+            {"status": "error", "message": f"Import failed: {str(e)}"},
+        )
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ============================================================================
+# API Endpoints - Session Management
 # ============================================================================
 
 

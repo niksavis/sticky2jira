@@ -53,9 +53,9 @@ CREATE TABLE IF NOT EXISTS color_mappings (
 CREATE TABLE IF NOT EXISTS jira_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),  -- Enforce single row
     server_url TEXT NOT NULL,
-    username TEXT NOT NULL,
-    api_token BLOB NOT NULL,  -- Encrypted using Windows DPAPI
+    api_token BLOB NOT NULL,  -- Encrypted API token
     default_project_key TEXT,
+    field_defaults TEXT,  -- JSON string of field defaults
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -414,46 +414,58 @@ def get_color_mappings(project_key: str) -> Dict[str, str]:
 def save_jira_settings(settings: Dict[str, str]) -> bool:
     """
     Save Jira connection settings (single row table).
-    API token is encrypted using Windows DPAPI before storage.
+    API token is encrypted before storage.
 
     Args:
-        settings: Dictionary with keys: server_url, username, api_token, default_project_key
+        settings: Dictionary with keys: server_url, api_token, default_project_key
 
     Returns:
         True if save successful
     """
-    required = ["server_url", "username", "api_token"]
+    required = ["server_url", "api_token"]
     for field in required:
         if field not in settings:
             raise ValueError(f"Missing required field: {field}")
 
-    # Encrypt API token using Windows DPAPI
+    # Encrypt API token
     from services.crypto_utils import encrypt_token
+    import json
 
     encrypted_token = encrypt_token(settings["api_token"])
+
+    # Serialize field_defaults to JSON if provided
+    field_defaults_json = None
+    if "field_defaults" in settings and settings["field_defaults"]:
+        field_defaults_json = json.dumps(settings["field_defaults"])
 
     with get_db_connection() as conn:
         conn.execute(
             """
-            INSERT INTO jira_settings (id, server_url, username, api_token, default_project_key)
-            VALUES (1, ?, ?, ?, ?)
+            INSERT INTO jira_settings (id, server_url, api_token, default_project_key, field_defaults, field_defaults_project, field_defaults_issue_type)
+            VALUES (1, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id)
             DO UPDATE SET 
                 server_url = ?,
-                username = ?,
                 api_token = ?,
                 default_project_key = ?,
+                field_defaults = ?,
+                field_defaults_project = ?,
+                field_defaults_issue_type = ?,
                 updated_at = ?
             """,
             (
                 settings["server_url"],
-                settings["username"],
                 encrypted_token,
                 settings.get("default_project_key"),
+                field_defaults_json,
+                settings.get("field_defaults_project"),
+                settings.get("field_defaults_issue_type"),
                 settings["server_url"],
-                settings["username"],
                 encrypted_token,
                 settings.get("default_project_key"),
+                field_defaults_json,
+                settings.get("field_defaults_project"),
+                settings.get("field_defaults_issue_type"),
                 datetime.now(),
             ),
         )
@@ -480,6 +492,7 @@ def get_jira_settings() -> Optional[Dict[str, Any]]:
 
         # Decrypt API token
         from services.crypto_utils import decrypt_token, is_encrypted
+        import json
 
         encrypted_token = settings["api_token"]
 
@@ -510,7 +523,172 @@ def get_jira_settings() -> Optional[Dict[str, Any]]:
                 else str(encrypted_token)
             )
 
+        # Parse field_defaults JSON if present
+        field_defaults = {}
+        if settings.get("field_defaults"):
+            try:
+                field_defaults = json.loads(settings["field_defaults"])
+            except Exception:
+                field_defaults = {}
+        settings["field_defaults"] = field_defaults
+
+        # Include field_defaults_project and field_defaults_issue_type
+        settings["field_defaults_project"] = settings.get("field_defaults_project")
+        settings["field_defaults_issue_type"] = settings.get(
+            "field_defaults_issue_type"
+        )
+
         return settings
+
+
+# ============================================================================
+# Field Defaults Configuration CRUD Operations
+# ============================================================================
+
+
+def save_field_defaults_config(
+    project_key: str, issue_type: str, field_defaults: Dict[str, Any]
+) -> bool:
+    """
+    Save field defaults configuration for a specific project/issue type.
+
+    Args:
+        project_key: Jira project key
+        issue_type: Issue type name (e.g., 'Story', 'Task', 'Bug')
+        field_defaults: Dictionary of field defaults
+
+    Returns:
+        True if successful
+    """
+    import json
+
+    field_defaults_json = json.dumps(field_defaults) if field_defaults else "{}"
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO field_defaults_config (project_key, issue_type, field_defaults)
+            VALUES (?, ?, ?)
+            ON CONFLICT(project_key, issue_type)
+            DO UPDATE SET 
+                field_defaults = ?,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (project_key, issue_type, field_defaults_json, field_defaults_json),
+        )
+    logger.info(f"Saved field defaults for {project_key}/{issue_type}")
+    return True
+
+
+def get_field_defaults_config(
+    project_key: str, issue_type: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Get field defaults for a specific project/issue type.
+
+    Args:
+        project_key: Jira project key
+        issue_type: Issue type name
+
+    Returns:
+        Dictionary of field defaults or None
+    """
+    import json
+
+    with get_db_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT field_defaults 
+            FROM field_defaults_config 
+            WHERE project_key = ? AND issue_type = ?
+            """,
+            (project_key, issue_type),
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    try:
+        return json.loads(row["field_defaults"])
+    except Exception:
+        return {}
+
+
+def get_all_field_defaults_configs(
+    project_key: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Get all field defaults configurations, optionally filtered by project.
+
+    Args:
+        project_key: Optional project key to filter by
+
+    Returns:
+        List of configuration dictionaries with project_key, issue_type, and field_defaults
+    """
+    import json
+
+    with get_db_connection() as conn:
+        if project_key:
+            cursor = conn.execute(
+                """
+                SELECT project_key, issue_type, field_defaults 
+                FROM field_defaults_config 
+                WHERE project_key = ?
+                ORDER BY issue_type
+                """,
+                (project_key,),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT project_key, issue_type, field_defaults 
+                FROM field_defaults_config 
+                ORDER BY project_key, issue_type
+                """
+            )
+        rows = cursor.fetchall()
+
+    configs = []
+    for row in rows:
+        try:
+            field_defaults = json.loads(row["field_defaults"])
+        except Exception:
+            field_defaults = {}
+
+        configs.append(
+            {
+                "project_key": row["project_key"],
+                "issue_type": row["issue_type"],
+                "field_defaults": field_defaults,
+            }
+        )
+
+    return configs
+
+
+def delete_field_defaults_config(project_key: str, issue_type: str) -> bool:
+    """
+    Delete field defaults configuration for a specific project/issue type.
+
+    Args:
+        project_key: Jira project key
+        issue_type: Issue type name
+
+    Returns:
+        True if successful
+    """
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            DELETE FROM field_defaults_config 
+            WHERE project_key = ? AND issue_type = ?
+            """,
+            (project_key, issue_type),
+        )
+    logger.info(f"Deleted field defaults for {project_key}/{issue_type}")
+    return True
 
 
 # ============================================================================
