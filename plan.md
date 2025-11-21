@@ -25,19 +25,86 @@ A browser-based local application that extracts text from sticky note board imag
 - Encrypted credential storage (Fernet AES-128)
 - Multi-type field defaults configuration UI
 
+### ✅ Phase 1.5 Completed Features (UI/UX Improvements)
+
+**HIGH PRIORITY (All Fixed):**
+
+1. ✅ Multi-image workflow - Append regions with globally unique IDs using maxRegionId counter
+2. ✅ Project column added to Issue Review table
+3. ✅ "New Import" backend implemented - `/api/session/new` endpoint with `truncate_issues()`
+4. ✅ Visual save feedback - Spinner (⏳) → Checkmark (✓) with background color changes
+5. ✅ Auto-advance tabs - Automatically switch to next tab after OCR/mapping/import complete
+6. ✅ User-friendly error messages - Translated technical errors to plain language
+7. ✅ OCR Review stats/preview - Show detected regions count, color distribution preview
+8. ✅ Navigation buttons on all tabs - Added "Proceed to..." buttons on Upload and Setup
+9. ✅ "Clear All & Start Over" relocated - Moved to Issue Review header, renamed for clarity
+
+**MEDIUM PRIORITY (All Fixed):**
+
+10. ✅ Tab progress indicators - Dynamic badges with ✓ for complete, counts for issues/results
+11. ✅ Image filename tracking - New column shows source image for each region
+12. ✅ Confidence filtering - Dropdown to filter by high/medium/low, color-coded badges (green/yellow/red)
+13. ✅ Retry failed imports - Button to re-attempt only errored issues without re-importing successful ones
+14. ✅ Bulk select operations - Checkboxes, toolbar with Select All/Deselect, Set Project/Type, Delete Selected
+15. ✅ Keyboard shortcuts - Ctrl+A (select all), Delete (bulk delete), Escape (deselect), Enter (save + next row)
+16. ✅ Mobile responsive tables - CSS-based responsive design with data-label attributes, touch-friendly controls
+
+**LOWER PRIORITY (All Completed):**
+
+17. ✅ Image preview thumbnails - Show original sticky note per row, click to enlarge in modal
+18. ✅ Drag-and-drop file upload - Drop zone with visual feedback, supports clipboard paste (Ctrl+V)
+
 ### 🚧 Known Limitations (To Be Addressed in Phase 2+)
 
 - No manual region drawing (OCR detection only)
 - No preprocessing presets (auto-detect only)
 - No Quick Fix Grid for bulk corrections
 - No card view (table view only)
-- No bulk operations (select multiple → edit)
+- ~~No bulk operations (select multiple → edit)~~ ✅ **FIXED in Phase 1.5**
 - No session export/import (JSON)
 - No import history viewer
 - No "Add Images" mode (new session only)
 - No visual indicators (🆕/✏️/✅/⚠️) for issue status
 - No CSV error export
 - No retry failed imports
+
+### 🐛 UI/UX Issues Requiring Fixes
+
+**Navigation & Flow:**
+
+1. **Inconsistent "Proceed" buttons** - Upload and Setup tabs missing navigation buttons
+2. **No auto-advance tabs** - Should switch tabs automatically after OCR/mapping/import complete
+3. **Missing tab progress indicators** - Can't tell which steps are complete (no checkmarks or counts)
+4. **Empty OCR Review tab** - Just shows button, no preview/stats of detected regions
+
+**Session Management:**
+
+5. **"New Import" button broken** - Backend not implemented, doesn't clear database
+6. **Misleading "New Import" label** - Sounds like starting import, actually clears data
+7. **Poor placement** - Always visible in header, too easy to click accidentally
+8. **Multi-image workflow broken** - OCR replaces regions instead of appending (CRITICAL)
+
+**Issue Review Table:**
+
+9. **Missing Project column** - Can't see which project issues belong to
+10. **No save feedback** - Inline edits happen silently, no visual confirmation
+11. **No undo functionality** - Can't undo deletes or bad edits
+12. **No image preview** - Can't verify OCR against original sticky note
+
+**Data Management:**
+
+13. **No bulk operations** - Can't select multiple issues to delete/edit
+14. **Confidence not actionable** - Shows % but can't filter/sort by it
+15. **No keyboard shortcuts** - Everything requires mouse clicks
+
+**Error Handling:**
+
+16. **Technical errors shown to users** - Raw Python errors displayed in UI
+17. **No retry failed imports** - Must re-import all issues if some fail
+
+**Responsive Design:**
+
+18. **Tables not mobile-friendly** - Probably don't work well on smaller screens
 
 ## Core Requirements
 
@@ -339,19 +406,47 @@ socket.on('import_error', {error});
 **Development Order Priority:**
 
 - **Phase 1 (MVP)**: ✅ **COMPLETE** - Steps 1-4, all 7 tabs functional, Jira connection, OCR processing, color mapping, issue review, import with progress, encrypted credentials, multi-type field defaults, update vs create logic
-- **Phase 2 (Current - OCR Enhancements)**: Manual region drawing, preprocessing presets, Quick Fix Grid, OCR parameter tuning UI
+- **Phase 1.5 (UI Fixes - CURRENT)**: Critical UI/UX improvements discovered during testing
+  - **HIGH PRIORITY (Quick Wins)**:
+    1. ✅ Fix duplicate colors in mapping (color consolidation)
+    2. ✅ Database persistence (OCR → DB → Import)
+    3. ✅ Merge Import tab into Issue Review
+    4. ✅ Add Issue Key column visibility
+    5. 🔧 Fix multi-image workflow (append regions, not replace) - CRITICAL
+    6. 🔧 Add Project column to Issue Review table
+    7. 🔧 Implement "New Import" button backend (truncate_issues)
+    8. 🔧 Add visual save feedback (spinner/checkmark) for inline edits
+    9. 🔧 Auto-advance tabs after OCR/mapping/import complete
+  - **MEDIUM PRIORITY**:
+    10. Standardize navigation buttons across all tabs
+    11. Add tab progress indicators (checkmarks, counts)
+    12. OCR Review tab preview (thumbnails, stats, counts)
+    13. Better "New Import" label and placement
+    14. User-friendly error messages (no raw Python errors)
+  - **LOWER PRIORITY**:
+    15. Add image filename column
+    16. Undo functionality
+    17. Image preview in Issue Review
+    18. Confidence filtering/sorting
+    19. Bulk select and operations
+    20. Keyboard shortcuts
+- **Phase 2 (OCR Enhancements)**: Manual region drawing, preprocessing presets, Quick Fix Grid, OCR parameter tuning UI
 - **Phase 3 (Multi-Project & Bulk Ops)**: Bulk operations (select rows → edit/delete), card view toggle, project grouping, undo capability
 - **Phase 4 (Session Management)**: Export/import JSON, import history viewer, "Add Images" mode (accumulate from multiple images)
 - **Phase 5 (UI Polish)**: Visual indicators (🆕 new/✏️ update/✅ valid/⚠️ errors), inline validation tooltips, CSV error export
 - **Phase 6 (Advanced Features)**: Retry failed imports, preprocessing presets, performance tuning, field validation against templates
 
-**Next Immediate Priorities (Phase 2):**
+**Next Immediate Priorities (Phase 1.5 - UI Fixes):**
 
-1. Manual region drawing on canvas (missed stickies)
-2. Quick Fix Grid (thumbnail + textarea for rapid corrections)
-3. Preprocessing presets (Low Light, High Contrast, Handwriting)
-4. OCR parameter sliders UI (HSV tolerance, min/max size, proximity)
-5. Re-run OCR button with adjusted settings
+1. **Fix multi-image workflow** - Append OCR regions instead of replacing (CRITICAL)
+2. **Add Project column** to Issue Review table
+3. **Implement "New Import" backend** - Actually clear database with truncate_issues()
+4. **Add visual save feedback** - Show spinner/checkmark when editing summary/description
+5. **Auto-advance tabs** - Switch to next tab after OCR complete, mapping saved, import done
+6. **Better error messages** - Wrap try/catch around imports, show user-friendly messages
+7. **OCR Review preview** - Show detected region count, color summary, confidence stats
+8. **Tab navigation buttons** - Add "Next Step" button to Upload and Setup tabs
+9. **Rename "New Import"** - Change to "Clear All & Start Over" and move to Setup tab
 
 **Additional Files Created:**
 

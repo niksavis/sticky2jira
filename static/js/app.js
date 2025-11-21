@@ -16,6 +16,11 @@ const appState = {
   projects: [],
   issueTypes: {},
   socket: null,
+  maxRegionId: 0, // Track highest region ID for multi-image support
+  failedIssues: [], // Store failed imports for retry
+  selectedImages: [], // Images selected for upload
+  uploadedImages: [], // Images that have been uploaded
+  processNextImage: null, // Function to continue processing queue
 };
 
 // ============================================================================
@@ -41,14 +46,51 @@ function initSocketIO() {
     updateProgress(data.percent, data.message);
 
     if (data.status === "complete") {
-      appState.ocrRegions = data.regions;
+      // Append regions instead of replace (multi-image support)
+      // Renumber IDs to be globally unique
+      const newRegions = data.regions.map((region) => {
+        appState.maxRegionId++;
+        return { ...region, id: appState.maxRegionId };
+      });
+      appState.ocrRegions.push(...newRegions);
+
       hideProgress();
       renderOCRResults();
-      showAlert("OCR processing complete!", "success");
+      showAlert(
+        `OCR processing complete! Found ${newRegions.length} regions (${appState.ocrRegions.length} total)`,
+        "success"
+      );
       document.getElementById("proceedToMappingBtn").style.display = "block";
+      document.getElementById("uploadNextBtn").style.display = "block";
+
+      // Update badges
+      updateTabBadge("upload", "complete");
+      updateTabBadge("ocr", "count", appState.ocrRegions.length);
+
+      // If processing multiple images, continue to next
+      if (appState.processNextImage) {
+        appState.processNextImage();
+      } else {
+        // Single image workflow - auto-advance to OCR Review tab
+        setTimeout(() => switchTab("ocr-tab"), 1000);
+      }
     } else if (data.status === "error") {
       hideProgress();
-      showAlert(`OCR Error: ${data.message}`, "danger");
+      // User-friendly error message
+      const userMsg = data.message.includes("PaddleOCR")
+        ? "OCR engine failed - please try a different image or restart the application"
+        : data.message.includes("FileNotFoundError")
+        ? "Image file not found - please upload again"
+        : data.message.includes("OutOfMemory")
+        ? "Image too large - please use a smaller image (max 2000px)"
+        : "OCR processing failed - please try again";
+      showAlert(userMsg, "danger");
+      console.error("OCR Error Details:", data.message);
+
+      // If processing multiple images, continue to next even on error
+      if (appState.processNextImage) {
+        appState.processNextImage();
+      }
     }
   });
 
@@ -63,9 +105,24 @@ function initSocketIO() {
       renderImportResults(data);
       showAlert("Import complete!", "success");
       switchTab("results-tab");
+
+      // Update Results badge with created + updated count
+      const totalImported = (data.created || 0) + (data.updated || 0);
+      updateTabBadge("results", "count", totalImported);
     } else if (data.status === "error") {
       hideProgress();
-      showAlert(`Import Error: ${data.message}`, "danger");
+      // User-friendly error message
+      const userMsg = data.message.includes("JIRAError")
+        ? "Jira connection failed - please check credentials in Setup tab"
+        : data.message.includes("404")
+        ? "Jira project not found - verify project key"
+        : data.message.includes("401") || data.message.includes("403")
+        ? "Jira authentication failed - check API token"
+        : data.message.includes("field")
+        ? "Missing required Jira field - configure defaults in Setup tab"
+        : "Import failed - check Results tab for details";
+      showAlert(userMsg, "danger");
+      console.error("Import Error Details:", data.message);
     }
   });
 }
@@ -158,6 +215,8 @@ function saveJiraSettings(event) {
         showAlert("Settings saved successfully", "success");
         // Reload projects to update both dropdowns
         loadProjects();
+        // Mark setup as complete
+        updateTabBadge("setup", "complete");
       } else {
         showAlert(`Failed to save settings: ${data.error}`, "danger");
       }
@@ -216,82 +275,310 @@ function getJiraFormData() {
 // Image Upload
 // ============================================================================
 
-function handleImageSelect(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+function preventDefaults(e) {
+  e.preventDefault();
+  e.stopPropagation();
+}
 
-  // Validate file size (5MB max)
-  if (file.size > 5 * 1024 * 1024) {
-    showAlert("File too large. Maximum size is 5MB.", "danger");
+function handleDrop(e) {
+  const dt = e.dataTransfer;
+  const files = dt.files;
+
+  if (files.length > 0) {
+    // Convert FileList to Array
+    const filesArray = Array.from(files);
+
+    // Validate all are image files
+    const validFiles = filesArray.filter((file) => {
+      if (!file.type.startsWith("image/")) {
+        showAlert(`Skipping ${file.name} - not an image file`, "warning");
+        return false;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        showAlert(`Skipping ${file.name} - exceeds 5MB limit`, "warning");
+        return false;
+      }
+      return true;
+    });
+
+    if (validFiles.length === 0) {
+      showAlert("No valid image files dropped", "danger");
+      return;
+    }
+
+    // Update file input with all valid files
+    const dataTransfer = new DataTransfer();
+    validFiles.forEach((file) => dataTransfer.items.add(file));
+    document.getElementById("imageFile").files = dataTransfer.files;
+
+    handleImageSelect({ target: { files: dataTransfer.files } });
+  }
+}
+
+function handlePaste(e) {
+  // Only handle paste on upload tab and if not typing in an input
+  const activeTab = document.querySelector(".tab-pane.active");
+  if (!activeTab || activeTab.id !== "upload") return;
+
+  const target = e.target;
+  if (
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.contentEditable === "true"
+  ) {
+    return; // Don't intercept paste in editable fields
+  }
+
+  const items = e.clipboardData?.items;
+  if (!items) return;
+
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf("image") !== -1) {
+      e.preventDefault();
+      const blob = items[i].getAsFile();
+
+      // Create File object from blob
+      const file = new File([blob], `pasted-image-${Date.now()}.png`, {
+        type: blob.type,
+      });
+
+      // Update file input
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      document.getElementById("imageFile").files = dataTransfer.files;
+
+      handleImageSelect({ target: { files: [file] } });
+      showAlert("Image pasted from clipboard", "info", 2000);
+      break;
+    }
+  }
+}
+
+function handleImageSelect(event) {
+  const files = event.target.files;
+  if (!files || files.length === 0) return;
+
+  // Validate all files
+  const validFiles = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+
+    // Validate file size (5MB max)
+    if (file.size > 5 * 1024 * 1024) {
+      showAlert(
+        `File ${file.name} is too large. Maximum size is 5MB per image.`,
+        "warning"
+      );
+      continue;
+    }
+
+    validFiles.push(file);
+  }
+
+  if (validFiles.length === 0) {
+    showAlert("No valid images selected.", "danger");
     return;
   }
 
-  // Preview image
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    document.getElementById("previewImg").src = e.target.result;
-    document.getElementById("imagePreview").style.display = "block";
-    document.getElementById("uploadImageBtn").disabled = false;
-  };
-  reader.readAsDataURL(file);
+  // Update appState with selected files
+  appState.selectedImages = validFiles;
+
+  // Show gallery preview
+  displayImageGallery(validFiles);
+
+  // Enable upload button
+  document.getElementById("uploadImageBtn").disabled = false;
+  document.getElementById("uploadBtnCount").textContent = validFiles.length;
+  document.getElementById("uploadBtnCount").style.display = "inline";
+}
+
+function displayImageGallery(files) {
+  const gallery = document.getElementById("previewGallery");
+  const container = document.getElementById("imagePreviewGallery");
+  const count = document.getElementById("imageCount");
+
+  gallery.innerHTML = "";
+
+  files.forEach((file, index) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.width = "150px";
+      card.innerHTML = `
+        <img src="${
+          e.target.result
+        }" class="card-img-top" style="height: 100px; object-fit: cover;" alt="${
+        file.name
+      }">
+        <div class="card-body p-2">
+          <p class="card-text small text-truncate mb-0" title="${file.name}">${
+        file.name
+      }</p>
+          <small class="text-muted">${(file.size / 1024).toFixed(1)} KB</small>
+        </div>
+      `;
+      gallery.appendChild(card);
+    };
+    reader.readAsDataURL(file);
+  });
+
+  count.textContent = files.length;
+  container.style.display = "block";
+}
+
+function clearImageGallery() {
+  // Reset all image-related state
+  appState.selectedImages = [];
+  appState.uploadedImages = [];
+
+  // Clear UI
+  document.getElementById("previewGallery").innerHTML = "";
+  document.getElementById("imagePreviewGallery").style.display = "none";
+  document.getElementById("imageCount").textContent = "0";
+  document.getElementById("uploadBtnCount").textContent = "0";
+  document.getElementById("uploadBtnCount").style.display = "none";
+
+  // Reset file input
+  document.getElementById("imageFile").value = "";
+
+  // Reset buttons
+  document.getElementById("uploadImageBtn").disabled = true;
+  document.getElementById("processOcrBtn").style.display = "none";
+  document.getElementById("addMoreImagesBtn").style.display = "none";
+}
+
+function addMoreImages() {
+  // Re-enable file selection without clearing existing OCR regions
+  document.getElementById("addMoreImagesBtn").style.display = "none";
+
+  // Clear uploaded images to allow new selection
+  appState.selectedImages = [];
+  appState.uploadedImages = [];
+
+  // Clear gallery
+  document.getElementById("previewGallery").innerHTML = "";
+  document.getElementById("imagePreviewGallery").style.display = "none";
+
+  // Reset file input and enable
+  document.getElementById("imageFile").value = "";
+  document.getElementById("uploadImageBtn").disabled = true;
+
+  // Show upload next button to return to upload workflow
+  document.getElementById("uploadNextBtn").style.display = "block";
 }
 
 function uploadImage() {
-  const fileInput = document.getElementById("imageFile");
-  const file = fileInput.files[0];
-  if (!file) return;
+  const files = appState.selectedImages || [];
+  if (files.length === 0) return;
 
-  const formData = new FormData();
-  formData.append("file", file);
+  showProgress(0, `Uploading ${files.length} image(s)...`);
 
-  showProgress(0, "Uploading image...");
+  let uploadedCount = 0;
+  const uploadedFiles = [];
 
-  fetch("/api/ocr/upload", {
-    method: "POST",
-    body: formData,
-  })
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.success) {
-        appState.currentImage = data.filename;
-        hideProgress();
-        showAlert("Image uploaded successfully", "success");
-        document.getElementById("processOcrBtn").style.display = "block";
-      } else {
-        hideProgress();
-        showAlert(`Upload failed: ${data.error}`, "danger");
-      }
-    })
-    .catch((error) => {
+  // Upload files sequentially
+  const uploadNext = (index) => {
+    if (index >= files.length) {
+      // All uploaded
       hideProgress();
-      showAlert(`Upload error: ${error.message}`, "danger");
-    });
+      appState.uploadedImages = uploadedFiles;
+      document.getElementById("processOcrBtn").style.display = "block";
+      document.getElementById("uploadImageBtn").disabled = true;
+      showAlert(`${uploadedCount} image(s) uploaded successfully`, "success");
+      return;
+    }
+
+    const file = files[index];
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const percent = Math.round(((index + 1) / files.length) * 100);
+    showProgress(
+      percent,
+      `Uploading ${index + 1}/${files.length}: ${file.name}...`
+    );
+
+    fetch("/api/ocr/upload", {
+      method: "POST",
+      body: formData,
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          uploadedCount++;
+          uploadedFiles.push(data.filename);
+          uploadNext(index + 1);
+        } else {
+          hideProgress();
+          showAlert(`Upload failed for ${file.name}: ${data.error}`, "danger");
+        }
+      })
+      .catch((error) => {
+        hideProgress();
+        showAlert(`Upload error for ${file.name}: ${error.message}`, "danger");
+      });
+  };
+
+  uploadNext(0);
 }
 
 function startOCRProcessing() {
-  if (!appState.currentImage) return;
+  const images = appState.uploadedImages || [];
+  if (images.length === 0) return;
 
-  showProgress(0, "Starting OCR processing...");
+  let currentIndex = 0;
 
-  fetch("/api/ocr/process", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename: appState.currentImage }),
-  })
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.success) {
-        // Progress updates will come via SocketIO
-        console.log("OCR processing started");
-      } else {
-        hideProgress();
-        showAlert(`OCR failed: ${data.error}`, "danger");
-      }
+  const processNext = () => {
+    if (currentIndex >= images.length) {
+      // All processed - clean up and show "Add More Images" button
+      appState.processNextImage = null;
+      document.getElementById("addMoreImagesBtn").style.display = "block";
+      document.getElementById("processOcrBtn").style.display = "none";
+
+      // Auto-advance to OCR Review tab
+      setTimeout(() => switchTab("ocr-tab"), 1000);
+      return;
+    }
+
+    const filename = images[currentIndex];
+    const percent = Math.round(((currentIndex + 1) / images.length) * 100);
+    showProgress(
+      percent,
+      `Processing ${currentIndex + 1}/${images.length}: ${filename}...`
+    );
+
+    fetch("/api/ocr/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: filename }),
     })
-    .catch((error) => {
-      hideProgress();
-      showAlert(`OCR error: ${error.message}`, "danger");
-    });
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          // Progress updates will come via SocketIO
+          console.log(`OCR processing started for ${filename}`);
+          // Store current image for SocketIO handler
+          appState.currentImage = filename;
+          currentIndex++;
+        } else {
+          hideProgress();
+          showAlert(`OCR failed for ${filename}: ${data.error}`, "danger");
+          currentIndex++;
+          processNext();
+        }
+      })
+      .catch((error) => {
+        hideProgress();
+        showAlert(`OCR error: ${error.message}`, "danger");
+        currentIndex++;
+        processNext();
+      });
+  };
+
+  // Store processNext in appState so SocketIO handler can call it
+  appState.processNextImage = processNext;
+  processNext();
 }
 
 // ============================================================================
@@ -300,10 +587,46 @@ function startOCRProcessing() {
 
 function renderOCRResults() {
   const container = document.getElementById("ocrResults");
+  const summary = document.getElementById("ocrSummary");
+
   if (appState.ocrRegions.length === 0) {
     container.innerHTML = '<p class="text-muted">No regions detected.</p>';
+    summary.style.display = "none";
     return;
   }
+
+  // Calculate statistics
+  const totalRegions = appState.ocrRegions.length;
+  const avgConfidence = Math.round(
+    appState.ocrRegions.reduce((sum, r) => sum + (r.confidence || 0), 0) /
+      totalRegions
+  );
+  const lowConfCount = appState.ocrRegions.filter(
+    (r) => (r.confidence || 0) < 70
+  ).length;
+
+  // Color breakdown
+  const colorCounts = {};
+  appState.ocrRegions.forEach((r) => {
+    colorCounts[r.color_hex] = (colorCounts[r.color_hex] || 0) + 1;
+  });
+  const colorCount = Object.keys(colorCounts).length;
+
+  // Update summary
+  document.getElementById("totalRegions").textContent = totalRegions;
+  document.getElementById("avgConfidence").textContent = avgConfidence;
+  document.getElementById("colorCount").textContent = colorCount;
+  document.getElementById("lowConfCount").textContent = lowConfCount;
+
+  const colorBreakdown = document.getElementById("colorBreakdown");
+  colorBreakdown.innerHTML = Object.entries(colorCounts)
+    .map(
+      ([hex, count]) =>
+        `<span class="badge" style="background-color: ${hex}; color: white;">${hex}: ${count}</span>`
+    )
+    .join("");
+
+  summary.style.display = "block";
 
   let html = "";
   appState.ocrRegions.forEach((region) => {
@@ -400,6 +723,7 @@ function populateProjectSelect() {
   const fieldDefaultsDatalist = document.getElementById(
     "fieldDefaultsProjectList"
   );
+  const bulkProjectSelect = document.getElementById("bulkProject");
 
   mappingDatalist.innerHTML = "";
   if (defaultDatalist) {
@@ -407,6 +731,10 @@ function populateProjectSelect() {
   }
   if (fieldDefaultsDatalist) {
     fieldDefaultsDatalist.innerHTML = "";
+  }
+  if (bulkProjectSelect) {
+    // Clear and reset bulk project dropdown
+    bulkProjectSelect.innerHTML = '<option value="">Set Project...</option>';
   }
 
   appState.projects.forEach((project) => {
@@ -430,6 +758,14 @@ function populateProjectSelect() {
       fieldDefaultOption.value = project.key;
       fieldDefaultOption.textContent = `${project.key} - ${project.name}`;
       fieldDefaultsDatalist.appendChild(fieldDefaultOption);
+    }
+
+    // Populate bulk project dropdown
+    if (bulkProjectSelect) {
+      const bulkOption = document.createElement("option");
+      bulkOption.value = project.key;
+      bulkOption.textContent = `${project.key} - ${project.name}`;
+      bulkProjectSelect.appendChild(bulkOption);
     }
   });
 
@@ -665,6 +1001,21 @@ function renderImportResults(data) {
     </div>
   `;
 
+  // Add retry button if there are failed issues
+  if (data.failed && data.failed > 0) {
+    html += `
+      <div class="alert alert-warning">
+        <h6><i class="bi bi-exclamation-triangle"></i> ${data.failed} issue(s) failed to import</h6>
+        <button type="button" class="btn btn-warning btn-sm mt-2" id="retryFailedBtn">
+          <i class="bi bi-arrow-clockwise"></i> Retry Failed Issues Only
+        </button>
+      </div>
+    `;
+
+    // Store failed issues for retry
+    appState.failedIssues = data.results.filter((r) => !r.success);
+  }
+
   // Show results if available
   if (data.results && data.results.length > 0) {
     html +=
@@ -696,6 +1047,51 @@ function renderImportResults(data) {
   }
 
   container.innerHTML = html;
+
+  // Attach retry button handler if button exists
+  const retryBtn = document.getElementById("retryFailedBtn");
+  if (retryBtn) {
+    retryBtn.addEventListener("click", retryFailedImport);
+  }
+}
+
+function retryFailedImport() {
+  if (!appState.failedIssues || appState.failedIssues.length === 0) {
+    showAlert("No failed issues to retry", "info");
+    return;
+  }
+
+  showAlert(
+    `Retrying ${appState.failedIssues.length} failed issue(s)...`,
+    "info"
+  );
+  showProgress();
+
+  // Find the original issues that failed
+  const failedSummaries = appState.failedIssues.map((f) => f.summary);
+  const issuesToRetry = appState.ocrRegions.filter((r) =>
+    failedSummaries.includes(r.text)
+  );
+
+  // Start import for failed issues only
+  fetch("/api/import/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ issues: issuesToRetry }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        showAlert("Retry started - check Results tab for progress", "success");
+      } else {
+        hideProgress();
+        showAlert(`Retry failed: ${data.error}`, "danger");
+      }
+    })
+    .catch((error) => {
+      hideProgress();
+      showAlert(`Retry error: ${error.message}`, "danger");
+    });
 }
 
 function escapeHtml(text) {
@@ -733,6 +1129,45 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("processOcrBtn")
     .addEventListener("click", startOCRProcessing);
+  document
+    .getElementById("clearImagesBtn")
+    .addEventListener("click", clearImageGallery);
+  document
+    .getElementById("addMoreImagesBtn")
+    .addEventListener("click", addMoreImages);
+
+  // Drag and drop functionality
+  const dropZone = document.getElementById("dropZone");
+
+  // Click to browse
+  dropZone.addEventListener("click", () => {
+    document.getElementById("imageFile").click();
+  });
+
+  // Prevent default drag behaviors
+  ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+    dropZone.addEventListener(eventName, preventDefaults, false);
+    document.body.addEventListener(eventName, preventDefaults, false);
+  });
+
+  // Highlight drop zone when dragging over it
+  ["dragenter", "dragover"].forEach((eventName) => {
+    dropZone.addEventListener(eventName, () => {
+      dropZone.classList.add("drag-over");
+    });
+  });
+
+  ["dragleave", "drop"].forEach((eventName) => {
+    dropZone.addEventListener(eventName, () => {
+      dropZone.classList.remove("drag-over");
+    });
+  });
+
+  // Handle dropped files
+  dropZone.addEventListener("drop", handleDrop);
+
+  // Clipboard paste (Ctrl+V)
+  document.addEventListener("paste", handlePaste);
 
   // OCR tab
   document
@@ -781,6 +1216,23 @@ document.addEventListener("DOMContentLoaded", () => {
     startJiraImport();
   });
 
+  // Setup Next button - go to Upload tab
+  document.getElementById("setupNextBtn").addEventListener("click", () => {
+    switchTab("upload-tab");
+  });
+
+  // Upload Next button - go to OCR Review tab (shown after OCR completes)
+  document.getElementById("uploadNextBtn")?.addEventListener("click", () => {
+    switchTab("ocr-tab");
+  });
+
+  // Confidence filter
+  document
+    .getElementById("confidenceFilter")
+    ?.addEventListener("change", (e) => {
+      filterByConfidence(e.target.value);
+    });
+
   // Load Fields button for field defaults
   document.getElementById("loadFieldsBtn").addEventListener("click", () => {
     loadFieldDefaults();
@@ -803,18 +1255,141 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
+  // Bulk operations buttons
+  document.getElementById("selectAllBtn")?.addEventListener("click", () => {
+    document
+      .querySelectorAll(".row-checkbox")
+      .forEach((cb) => (cb.checked = true));
+    updateBulkToolbar();
+  });
+
+  document.getElementById("deselectAllBtn")?.addEventListener("click", () => {
+    document
+      .querySelectorAll(".row-checkbox")
+      .forEach((cb) => (cb.checked = false));
+    updateBulkToolbar();
+  });
+
+  document.getElementById("bulkProject")?.addEventListener("change", (e) => {
+    const projectKey = e.target.value;
+    if (!projectKey) return;
+
+    const selectedIndices = Array.from(
+      document.querySelectorAll(".row-checkbox:checked")
+    ).map((cb) => parseInt(cb.dataset.index));
+
+    selectedIndices.forEach((index) => {
+      appState.ocrRegions[index].project_key = projectKey;
+    });
+
+    populateReviewTable();
+    showAlert(
+      `Project set to ${projectKey} for ${selectedIndices.length} issue(s)`,
+      "success",
+      3000
+    );
+  });
+
+  document.getElementById("bulkType")?.addEventListener("change", (e) => {
+    const issueType = e.target.value;
+    if (!issueType) return;
+
+    const selectedIndices = Array.from(
+      document.querySelectorAll(".row-checkbox:checked")
+    ).map((cb) => parseInt(cb.dataset.index));
+
+    selectedIndices.forEach((index) => {
+      appState.ocrRegions[index].issue_type = issueType;
+    });
+
+    populateReviewTable();
+    showAlert(
+      `Type set to ${issueType} for ${selectedIndices.length} issue(s)`,
+      "success",
+      3000
+    );
+  });
+
+  document.getElementById("bulkDeleteBtn")?.addEventListener("click", () => {
+    const selectedIndices = Array.from(
+      document.querySelectorAll(".row-checkbox:checked")
+    )
+      .map((cb) => parseInt(cb.dataset.index))
+      .sort((a, b) => b - a); // Sort descending to delete from end
+
+    if (selectedIndices.length === 0) return;
+
+    if (confirm(`Delete ${selectedIndices.length} selected issue(s)?`)) {
+      selectedIndices.forEach((index) => {
+        appState.ocrRegions.splice(index, 1);
+      });
+
+      populateReviewTable();
+      showAlert(`Deleted ${selectedIndices.length} issue(s)`, "success", 3000);
+    }
+  });
+
   // New session button
   document.getElementById("newSessionBtn").addEventListener("click", () => {
     if (
-      confirm("Start a new import session? This will clear all current data.")
+      confirm(
+        "⚠️ WARNING: This will permanently delete all OCR regions, color mappings, and imported issues.\n\nAre you absolutely sure you want to clear everything and start over?"
+      )
     ) {
       fetch("/api/session/new", { method: "POST" })
         .then((response) => response.json())
         .then((data) => {
           if (data.success) {
+            // Clear frontend state
+            appState.ocrRegions = [];
+            appState.colorMappings = {};
+            appState.issues = [];
+            appState.currentImage = null;
+            appState.maxRegionId = 0;
+
+            // Reload to reset UI
             location.reload();
+          } else {
+            showAlert(`Failed to start new session: ${data.error}`, "danger");
           }
+        })
+        .catch((error) => {
+          console.error("New session error:", error);
+          showAlert("Failed to start new session", "danger");
         });
+    }
+  });
+
+  // Global keyboard shortcuts
+  document.addEventListener("keydown", (e) => {
+    // Ctrl+A - Select all issues (in Issue Review tab)
+    if (
+      e.ctrlKey &&
+      e.key === "a" &&
+      document.getElementById("issues").classList.contains("active")
+    ) {
+      e.preventDefault();
+      document
+        .querySelectorAll(".row-checkbox")
+        .forEach((cb) => (cb.checked = true));
+      updateBulkToolbar();
+    }
+
+    // Delete key - Delete selected issues (if any selected)
+    if (e.key === "Delete" && !e.target.hasAttribute("contenteditable")) {
+      const selected = document.querySelectorAll(".row-checkbox:checked");
+      if (selected.length > 0) {
+        e.preventDefault();
+        document.getElementById("bulkDeleteBtn")?.click();
+      }
+    }
+
+    // Escape - Deselect all
+    if (e.key === "Escape") {
+      document
+        .querySelectorAll(".row-checkbox")
+        .forEach((cb) => (cb.checked = false));
+      updateBulkToolbar();
     }
   });
 });
@@ -868,6 +1443,10 @@ function applyColorMappingsAndProceed() {
 
         // Populate review table
         populateReviewTable();
+
+        // Update badges
+        updateTabBadge("mapping", "complete");
+        updateTabBadge("issues", "count", appState.ocrRegions.length);
       } else {
         showAlert("Failed to save mappings", "danger");
       }
@@ -891,20 +1470,45 @@ function populateReviewTable() {
 
     const row = tbody.insertRow();
     row.innerHTML = `
-      <td>${index + 1}</td>
-      <td><span class="color-badge" style="background-color: ${
+      <td data-label="Select"><input type="checkbox" class="row-checkbox" data-index="${index}"></td>
+      <td data-label="ID">${index + 1}</td>
+      <td data-label="Preview">
+        ${
+          region.image_filename
+            ? `<img src="/uploads/${region.image_filename}" 
+                 alt="Thumbnail" 
+                 class="img-thumbnail preview-thumbnail" 
+                 style="width: 60px; height: 60px; object-fit: cover; cursor: pointer;"
+                 data-filename="${region.image_filename}"
+                 onclick="showImagePreview('${region.image_filename}')">`
+            : '<span class="text-muted">-</span>'
+        }
+      </td>
+      <td data-label="Image"><small class="text-muted">${
+        region.image_filename || "N/A"
+      }</small></td>
+      <td data-label="Color"><span class="color-badge" style="background-color: ${
         region.color_hex
       };"></span></td>
-      <td>${issueKeyCell}</td>
-      <td>${region.issue_type || "N/A"}</td>
-      <td contenteditable="true" data-field="summary" data-id="${index}">${
+      <td data-label="Issue Key">${issueKeyCell}</td>
+      <td data-label="Project" contenteditable="true" data-field="project_key" data-id="${index}">${
+      region.project_key || ""
+    }</td>
+      <td data-label="Type">${region.issue_type || "N/A"}</td>
+      <td data-label="Summary" contenteditable="true" data-field="summary" data-id="${index}">${
       region.text || ""
     }</td>
-      <td contenteditable="true" data-field="description" data-id="${index}">${
+      <td data-label="Description" contenteditable="true" data-field="description" data-id="${index}">${
       region.linked_text || ""
     }</td>
-      <td>${Math.round(region.confidence || 0)}%</td>
-      <td>
+      <td data-label="Confidence">
+        <span class="badge bg-${getConfidenceBadgeClass(
+          region.confidence || 0
+        )}">
+          ${Math.round(region.confidence || 0)}%
+        </span>
+      </td>
+      <td data-label="Actions">
         <button class="btn btn-sm btn-danger" onclick="deleteIssue(${index})">Delete</button>
       </td>
     `;
@@ -914,28 +1518,92 @@ function populateReviewTable() {
   document
     .querySelectorAll("#issuesTable [contenteditable]")
     .forEach((cell) => {
+      // Show visual indicator on focus
+      cell.addEventListener("focus", (e) => {
+        e.target.style.outline = "2px solid #0d6efd";
+      });
+
+      // Enter key to save and move to next row
+      cell.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          e.target.blur(); // Trigger save
+
+          // Move to same cell in next row
+          const currentRow = e.target.closest("tr");
+          const nextRow = currentRow.nextElementSibling;
+          if (nextRow) {
+            const cellIndex = Array.from(currentRow.cells).indexOf(
+              e.target.closest("td")
+            );
+            const nextCell =
+              nextRow.cells[cellIndex]?.querySelector("[contenteditable]");
+            if (nextCell) {
+              nextCell.focus();
+            }
+          }
+        }
+      });
+
       cell.addEventListener("blur", (e) => {
+        e.target.style.outline = "none";
+
         const id = parseInt(e.target.dataset.id);
         const field = e.target.dataset.field;
         const value = e.target.textContent;
+
         if (appState.ocrRegions[id]) {
           if (field === "summary") {
             appState.ocrRegions[id].text = value;
           } else if (field === "description") {
             appState.ocrRegions[id].linked_text = value;
+          } else if (field === "project_key") {
+            appState.ocrRegions[id].project_key = value;
           }
 
           // Update database if db_id exists
           if (appState.ocrRegions[id].db_id) {
+            // Show saving indicator
+            const originalBg = e.target.style.backgroundColor;
+            e.target.style.backgroundColor = "#fff3cd";
+            e.target.textContent = e.target.textContent + " ⏳";
+
             const updateData = {};
             updateData[field] = value;
+
             fetch(`/api/issues/${appState.ocrRegions[id].db_id}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(updateData),
-            }).catch((error) =>
-              console.error("Failed to update issue:", error)
-            );
+            })
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.success) {
+                  // Show success feedback
+                  e.target.textContent = value + " ✓";
+                  e.target.style.backgroundColor = "#d1e7dd";
+                  setTimeout(() => {
+                    e.target.textContent = value;
+                    e.target.style.backgroundColor = originalBg;
+                  }, 1500);
+                } else {
+                  // Show error feedback
+                  e.target.style.backgroundColor = "#f8d7da";
+                  showAlert("Failed to save changes", "danger", 3000);
+                  setTimeout(() => {
+                    e.target.style.backgroundColor = originalBg;
+                  }, 2000);
+                }
+              })
+              .catch((error) => {
+                console.error("Failed to update issue:", error);
+                e.target.textContent = value;
+                e.target.style.backgroundColor = "#f8d7da";
+                showAlert("Network error - changes not saved", "danger", 3000);
+                setTimeout(() => {
+                  e.target.style.backgroundColor = originalBg;
+                }, 2000);
+              });
           }
         }
       });
@@ -944,6 +1612,75 @@ function populateReviewTable() {
   // Update issue count badge
   document.getElementById("issueCount").textContent =
     appState.ocrRegions.length;
+
+  // Attach checkbox event listeners
+  attachBulkSelectionHandlers();
+}
+
+function attachBulkSelectionHandlers() {
+  // Select all checkbox
+  const selectAllCheckbox = document.getElementById("selectAllCheckbox");
+  if (selectAllCheckbox) {
+    selectAllCheckbox.addEventListener("change", (e) => {
+      const checkboxes = document.querySelectorAll(".row-checkbox");
+      checkboxes.forEach((cb) => (cb.checked = e.target.checked));
+      updateBulkToolbar();
+    });
+  }
+
+  // Individual row checkboxes
+  document.querySelectorAll(".row-checkbox").forEach((cb) => {
+    cb.addEventListener("change", updateBulkToolbar);
+  });
+}
+
+function updateBulkToolbar() {
+  const selectedCheckboxes = document.querySelectorAll(".row-checkbox:checked");
+  const count = selectedCheckboxes.length;
+  const toolbar = document.getElementById("bulkToolbar");
+  const badge = document.getElementById("selectedCount");
+
+  if (count > 0) {
+    toolbar.style.display = "block";
+    badge.textContent = `${count} selected`;
+  } else {
+    toolbar.style.display = "none";
+  }
+
+  // Update select all checkbox state
+  const allCheckboxes = document.querySelectorAll(".row-checkbox");
+  const selectAllCheckbox = document.getElementById("selectAllCheckbox");
+  if (selectAllCheckbox) {
+    selectAllCheckbox.checked =
+      allCheckboxes.length > 0 && count === allCheckboxes.length;
+    selectAllCheckbox.indeterminate = count > 0 && count < allCheckboxes.length;
+  }
+}
+
+function filterByConfidence(filterType) {
+  const rows = document.querySelectorAll("#issuesTable tbody tr");
+
+  rows.forEach((row) => {
+    const confidenceText = row.cells[8].textContent; // Confidence column
+    const confidence = parseInt(confidenceText);
+
+    let show = true;
+    if (filterType === "high") {
+      show = confidence >= 80;
+    } else if (filterType === "medium") {
+      show = confidence >= 60 && confidence < 80;
+    } else if (filterType === "low") {
+      show = confidence < 60;
+    }
+
+    row.style.display = show ? "" : "none";
+  });
+
+  // Update count badge
+  const visibleCount = Array.from(rows).filter(
+    (r) => r.style.display !== "none"
+  ).length;
+  document.getElementById("issueCount").textContent = visibleCount;
 }
 
 function loadIssuesFromDatabase() {
@@ -978,6 +1715,18 @@ function deleteIssue(index) {
     appState.ocrRegions.splice(index, 1);
     populateReviewTable();
   }
+}
+
+function showImagePreview(filename) {
+  const modal = new bootstrap.Modal(
+    document.getElementById("imagePreviewModal")
+  );
+  const img = document.getElementById("modalPreviewImage");
+  img.src = `/uploads/${filename}`;
+  document.getElementById(
+    "imagePreviewModalLabel"
+  ).textContent = `Image: ${filename}`;
+  modal.show();
 }
 
 function updateImportSummary() {
@@ -1289,4 +2038,23 @@ function renderFieldDefaultsUI(fields) {
 
   html += "</div>";
   container.innerHTML = html;
+}
+
+// ============================================================================
+// Tab Progress Indicators
+// ============================================================================
+
+function updateTabBadge(tabId, type, count = null) {
+  const badge = document.getElementById(`${tabId}-badge`);
+  if (!badge) return;
+
+  if (type === "complete") {
+    badge.innerHTML = '<span class="badge bg-success ms-1">✓</span>';
+  } else if (type === "count" && count !== null) {
+    badge.innerHTML = `<span class="badge bg-primary ms-1">${count}</span>`;
+  } else if (type === "warning") {
+    badge.innerHTML = '<span class="badge bg-warning ms-1">!</span>';
+  } else if (type === "clear") {
+    badge.innerHTML = "";
+  }
 }

@@ -9,7 +9,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from threading import Timer
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -77,6 +77,16 @@ def index():
     """Main application page."""
     app.logger.info("Serving index page")
     return render_template("index.html")
+
+
+@app.route("/uploads/<filename>")
+def serve_upload(filename):
+    """Serve uploaded images."""
+    try:
+        return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+    except Exception as e:
+        app.logger.error(f"Failed to serve file {filename}: {str(e)}")
+        return jsonify({"success": False, "error": "File not found"}), 404
 
 
 # ============================================================================
@@ -675,6 +685,7 @@ def get_issues_preview():
                 "project_key": issue["project_key"],
                 "issue_key": issue["issue_key"],
                 "confidence": issue["confidence"],
+                "image_filename": issue.get("image_filename", ""),
                 "bbox": {
                     "x": issue["bbox_x"],
                     "y": issue["bbox_y"],
@@ -794,9 +805,13 @@ def new_session():
     try:
         app.logger.info("Starting new session - truncating issues table")
 
-        # TODO: Implement session reset using session_manager
+        # Clear all issues from database
+        session_manager.truncate_issues()
 
-        return jsonify({"success": True, "message": "New session started"})
+        app.logger.info("New session started - all issues cleared")
+        return jsonify(
+            {"success": True, "message": "New session started - all issues cleared"}
+        )
     except Exception as e:
         app.logger.error(f"Session reset failed: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500

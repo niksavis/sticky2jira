@@ -58,6 +58,33 @@ body {
   font-weight: 600;
 }
 
+/* Drop Zone */
+.drop-zone {
+  border: 2px dashed #ced4da;
+  border-radius: 0.75rem;
+  padding: 3rem 2rem;
+  text-align: center;
+  background-color: #f8f9fa;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.drop-zone:hover {
+  border-color: #0d6efd;
+  background-color: #e7f1ff;
+}
+
+.drop-zone.drag-over {
+  border-color: #0d6efd;
+  background-color: #cfe2ff;
+  border-style: solid;
+  transform: scale(1.02);
+}
+
+.drop-zone-content {
+  pointer-events: none;
+}
+
 /* OCR Results */
 .ocr-region {
   border: 1px solid #dee2e6;
@@ -198,6 +225,27 @@ body {
   color: #6c757d !important;
 }
 
+/* Image Preview Thumbnails */
+.preview-thumbnail {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border-radius: 0.25rem;
+}
+
+.preview-thumbnail:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+#imagePreviewModal .modal-body {
+  background-color: #f8f9fa;
+}
+
+#modalPreviewImage {
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
 /* Loading Spinner */
 .spinner-border-sm {
   width: 1rem;
@@ -205,7 +253,31 @@ body {
   border-width: 0.15rem;
 }
 
-/* Responsive */
+/* Tablet Responsive (Medium screens) */
+@media (max-width: 992px) and (min-width: 769px) {
+  /* Reduce table font size but keep horizontal layout */
+  #issuesTable {
+    font-size: 0.875rem;
+  }
+
+  #issuesTable th,
+  #issuesTable td {
+    padding: 0.5rem;
+  }
+
+  /* Stack bulk toolbar on tablets */
+  .bulk-operations-toolbar {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .bulk-operations-toolbar .btn,
+  .bulk-operations-toolbar .form-select {
+    min-width: 120px;
+  }
+}
+
+/* Mobile Responsive (Small screens) */
 @media (max-width: 768px) {
   .nav-tabs .nav-link {
     font-size: 0.875rem;
@@ -219,6 +291,103 @@ body {
   .color-mapping-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  /* Mobile-friendly table: stack columns */
+  #issuesTable thead {
+    display: none;
+  }
+
+  #issuesTable tr {
+    display: block;
+    margin-bottom: 1.5rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    background-color: white;
+  }
+
+  #issuesTable td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border: none;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  #issuesTable td:last-child {
+    border-bottom: none;
+  }
+
+  #issuesTable td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-right: 1rem;
+    min-width: 100px;
+  }
+
+  #issuesTable td[contenteditable] {
+    display: block;
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.5rem;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+  }
+
+  /* Make checkboxes and action buttons more touch-friendly */
+  #issuesTable input[type="checkbox"] {
+    width: 1.5rem;
+    height: 1.5rem;
+    cursor: pointer;
+  }
+
+  #issuesTable .btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0.5rem 1rem;
+  }
+
+  /* Bulk operations toolbar stack on mobile */
+  .bulk-operations-toolbar {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .bulk-operations-toolbar .btn,
+  .bulk-operations-toolbar .form-select {
+    width: 100%;
+  }
+
+  /* Make form controls touch-friendly */
+  .form-control,
+  .form-select,
+  .btn {
+    min-height: 44px;
+    font-size: 1rem;
+  }
+
+  /* Color mapping cards stack */
+  .color-mapping-row .form-select {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+
+  /* Image upload area */
+  #imageDropzone {
+    min-height: 150px;
+  }
+
+  /* Results list */
+  #importResults .list-group-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  #importResults .badge {
+    margin-top: 0.5rem;
   }
 }
 
