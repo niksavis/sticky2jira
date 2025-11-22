@@ -682,6 +682,7 @@ def get_all_field_defaults_configs(
                 "project_key": row["project_key"],
                 "issue_type": row["issue_type"],
                 "field_defaults": field_defaults,
+                "field_count": len(field_defaults),  # Add count for UI summary
             }
         )
 

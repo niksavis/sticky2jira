@@ -65,7 +65,6 @@ function initSocketIO() {
         `OCR processing complete! Found ${newRegions.length} regions (${appState.ocrRegions.length} total)`,
         "success"
       );
-      setButtonState("#proceedToMappingBtn", true);
 
       // Update badges
       updateTabBadge("upload", "complete");
@@ -115,9 +114,6 @@ function initSocketIO() {
       renderImportResults(data);
       showAlert("Import complete!", "success");
       switchTab("results-tab");
-
-      // Enable Proceed to Results button
-      setButtonState("#proceedToResultsBtn", true);
 
       // Update Results badge with created + updated count
       const totalImported = (data.created || 0) + (data.updated || 0);
@@ -182,9 +178,14 @@ function populateJiraForm(settings) {
 
   // Auto-load field defaults if both project and issue type are set
   if (settings.field_defaults_project && settings.field_defaults_issue_type) {
-    // Wait for projects to load first, then load fields
+    // Wait for projects to load first, then load summary panel
     setTimeout(() => {
-      loadFieldDefaults();
+      loadConfiguredDefaultsSummary();
+    }, 500);
+  } else {
+    // Just load the summary panel to show what's configured
+    setTimeout(() => {
+      loadConfiguredDefaultsSummary();
     }, 500);
   }
 }
@@ -1153,22 +1154,22 @@ function validateTabPrerequisites(tabId) {
     ocr: () =>
       appState.uploadedImages.length > 0
         ? null
-        : "Please upload at least one image first",
+        : "Tip: Upload images in the Upload tab to get started",
     mapping: () =>
       appState.ocrRegions.length > 0
         ? null
-        : "Please process an image with OCR first",
+        : "Tip: Process an image with OCR first in the OCR Review tab",
     issues: () => {
       // Check if OCR regions exist and have issue types assigned
       if (appState.ocrRegions.length === 0) {
-        return "Please process an image with OCR first";
+        return "Tip: Process an image with OCR first in the OCR Review tab";
       }
       // Check if all regions have issue types assigned (color mappings applied)
       const unmappedCount = appState.ocrRegions.filter(
         (r) => !r.issue_type
       ).length;
       if (unmappedCount > 0) {
-        return "Please configure color mappings first";
+        return "Tip: Configure color mappings in the Mapping tab first";
       }
       return null;
     },
@@ -1177,7 +1178,7 @@ function validateTabPrerequisites(tabId) {
       const resultsContainer = document.getElementById("importResults");
       return resultsContainer && resultsContainer.innerHTML.trim() !== ""
         ? null
-        : "Please import issues to Jira first";
+        : "Tip: Import issues to Jira from the Issue Review tab first";
     },
   };
 
@@ -1210,6 +1211,16 @@ function hideProgress() {
 }
 
 function switchTab(tabId) {
+  // Extract the tab name without the '-tab' suffix for validation
+  const tabName = tabId.replace("-tab", "");
+
+  // Check prerequisites and show informative message if missing
+  const tipMessage = validateTabPrerequisites(tabName);
+  if (tipMessage) {
+    showToast(tipMessage, "info", 4000);
+  }
+
+  // Always allow switching to the tab
   const tab = new bootstrap.Tab(document.getElementById(tabId));
   tab.show();
 }
@@ -1340,7 +1351,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Load saved Jira settings
   loadJiraSettings();
 
-  // Add tab prerequisite validation
+  // Add tab prerequisite validation (informative, non-blocking)
   document.querySelectorAll('[data-bs-toggle="tab"]').forEach((tabTrigger) => {
     tabTrigger.addEventListener("click", (e) => {
       const targetId =
@@ -1348,11 +1359,9 @@ document.addEventListener("DOMContentLoaded", () => {
         tabTrigger.getAttribute("id")?.replace("-tab", "");
 
       if (targetId) {
-        const error = validateTabPrerequisites(targetId);
-        if (error) {
-          e.preventDefault();
-          e.stopPropagation();
-          showToast(error, "warning");
+        const tipMessage = validateTabPrerequisites(targetId);
+        if (tipMessage) {
+          showToast(tipMessage, "info", 4000);
         }
       }
     });
@@ -1446,7 +1455,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("mappingForm").addEventListener("submit", (e) => {
     e.preventDefault();
     showAlert("Mappings saved successfully!", "success", 3000);
-    setButtonState("#proceedToIssuesBtn", true);
   });
 
   // Proceed to Issue Review button
@@ -1496,6 +1504,16 @@ document.addEventListener("DOMContentLoaded", () => {
     .addEventListener("click", () => {
       saveCurrentFieldDefaults();
     });
+
+  // Add New Default button
+  document.getElementById("addNewDefaultBtn").addEventListener("click", () => {
+    showFieldEditor("new");
+  });
+
+  // Cancel Edit button
+  document.getElementById("cancelEditBtn").addEventListener("click", () => {
+    resetFieldEditor();
+  });
 
   // Populate field defaults project dropdown when projects load
   document
@@ -2138,9 +2156,9 @@ function loadFieldDefaults() {
           3000
         );
       }
-      // Show save button
-      document.getElementById("saveFieldDefaultsSection").style.display =
-        "block";
+      // Enable save and cancel buttons
+      setButtonState("#saveFieldDefaultsBtn", true);
+      setButtonState("#cancelEditBtn", true);
     })
     .catch((error) => {
       showAlert(`Error loading fields: ${error.message}`, "danger");
@@ -2199,44 +2217,153 @@ function saveCurrentFieldDefaults() {
     .then((response) => response.json())
     .then((data) => {
       if (data.success) {
-        showAlert(
+        showToast(
           `Field defaults saved for ${projectKey}/${issueType}`,
           "success",
           3000
         );
-        loadConfiguredIssueTypes();
+        loadConfiguredDefaultsSummary(); // Refresh the summary panel
+        resetFieldEditor(); // Reset editor to clean state
       } else {
-        showAlert(`Failed to save: ${data.error}`, "danger");
+        showToast(`Failed to save: ${data.error}`, "danger");
       }
     })
     .catch((error) => {
-      showAlert(`Save error: ${error.message}`, "danger");
+      showToast(`Save error: ${error.message}`, "danger");
     });
 }
 
-function loadConfiguredIssueTypes() {
-  const projectKey = document.getElementById("fieldDefaultsProject").value;
-  if (!projectKey) return;
-
-  fetch(`/api/field-defaults?project_key=${projectKey}`)
+function loadConfiguredDefaultsSummary() {
+  fetch("/api/field-defaults")
     .then((response) => response.json())
     .then((data) => {
       if (data.success && data.configs && data.configs.length > 0) {
-        const container = document.getElementById("configuredTypesContainer");
-        const list = document.getElementById("configuredTypesList");
-
-        let html = "<ul class='list-unstyled mb-0'>";
-        data.configs.forEach((config) => {
-          html += `<li class='small'><span class='badge bg-success me-2'>${
-            config.issue_type
-          }</span> (${Object.keys(config.field_defaults).length} fields)</li>`;
-        });
-        html += "</ul>";
-
-        list.innerHTML = html;
-        container.style.display = "block";
+        renderConfiguredDefaultsSummary(data.configs);
+      } else {
+        document.getElementById("configuredDefaultsList").innerHTML =
+          '<p class="text-muted small mb-0">No field defaults configured yet.</p>';
       }
+    })
+    .catch((error) => {
+      console.error("Failed to load configured defaults:", error);
     });
+}
+
+function renderConfiguredDefaultsSummary(configs) {
+  const container = document.getElementById("configuredDefaultsList");
+
+  let html = '<div class="list-group list-group-flush">';
+
+  configs.forEach((config) => {
+    const fieldCount = config.field_count || 0;
+    const fieldsLabel = fieldCount === 1 ? "field" : "fields";
+
+    html += `
+      <div class="list-group-item px-2 py-2 d-flex justify-content-between align-items-start">
+        <div class="flex-grow-1" style="cursor: pointer;" 
+             onclick="loadExistingDefault('${config.project_key}', '${config.issue_type}')">
+          <div class="fw-bold small">${config.project_key} / ${config.issue_type}</div>
+          <div class="text-muted" style="font-size: 0.75rem;">
+            ${fieldCount} ${fieldsLabel} configured
+          </div>
+        </div>
+        <button class="btn btn-sm btn-outline-danger" 
+                onclick="deleteFieldDefault('${config.project_key}', '${config.issue_type}', event)"
+                title="Delete this configuration">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    `;
+  });
+
+  html += "</div>";
+  container.innerHTML = html;
+}
+
+function loadExistingDefault(projectKey, issueType) {
+  // Set the values
+  document.getElementById("fieldDefaultsProject").value = projectKey;
+  document.getElementById("fieldDefaultsIssueType").value = issueType;
+
+  // Update editor title
+  document.getElementById(
+    "editorTitle"
+  ).textContent = `Editing: ${projectKey} / ${issueType}`;
+
+  // Hide selection controls
+  document.getElementById("selectionControls").style.display = "none";
+
+  // Load the fields
+  loadFieldDefaults();
+}
+
+function showFieldEditor(mode) {
+  if (mode === "new") {
+    // Show selection controls
+    document.getElementById("selectionControls").style.display = "block";
+    document.getElementById("editorTitle").textContent = "Add New Issue Type";
+
+    // Clear inputs
+    document.getElementById("fieldDefaultsProject").value = "";
+    document.getElementById("fieldDefaultsIssueType").value = "";
+    document.getElementById("fieldDefaultsContainer").innerHTML =
+      '<p class="text-muted small">Select project and issue type, then click "Load Fields".</p>';
+    setButtonState("#saveFieldDefaultsBtn", false);
+    setButtonState("#cancelEditBtn", false);
+  }
+}
+
+function resetFieldEditor() {
+  // Show selection controls
+  document.getElementById("selectionControls").style.display = "block";
+  document.getElementById("editorTitle").textContent = "Field Editor";
+
+  // Clear inputs
+  document.getElementById("fieldDefaultsProject").value = "";
+  document.getElementById("fieldDefaultsIssueType").value = "";
+  document.getElementById("fieldDefaultsContainer").innerHTML =
+    '<p class="text-muted small">Select a configured type from the left, or create a new one.</p>';
+  setButtonState("#saveFieldDefaultsBtn", false);
+  setButtonState("#cancelEditBtn", false);
+}
+
+function deleteFieldDefault(projectKey, issueType, event) {
+  event.stopPropagation(); // Prevent triggering loadExistingDefault
+
+  showConfirm(
+    `Delete field defaults for <strong>${projectKey} / ${issueType}</strong>?<br><br>This cannot be undone.`,
+    "Delete Field Defaults",
+    "Delete",
+    "danger"
+  ).then((confirmed) => {
+    if (confirmed) {
+      fetch(`/api/field-defaults/${projectKey}/${issueType}`, {
+        method: "DELETE",
+      })
+        .then((response) => response.json())
+        .then((data) => {
+          if (data.success) {
+            showToast(
+              `Deleted defaults for ${projectKey}/${issueType}`,
+              "success"
+            );
+            loadConfiguredDefaultsSummary();
+            resetFieldEditor();
+          } else {
+            showToast(`Failed to delete: ${data.error}`, "danger");
+          }
+        })
+        .catch((error) => {
+          showToast(`Delete error: ${error.message}`, "danger");
+        });
+    }
+  });
+}
+
+function loadConfiguredIssueTypes() {
+  // Deprecated - replaced by loadConfiguredDefaultsSummary
+  // Keep for backward compatibility
+  loadConfiguredDefaultsSummary();
 }
 
 function renderFieldDefaultsUI(fields) {
@@ -2248,13 +2375,19 @@ function renderFieldDefaultsUI(fields) {
     return;
   }
 
-  let html =
-    '<div class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">';
+  // Sort fields: required fields first, then optional
+  const sortedFields = [...fields].sort((a, b) => {
+    if (a.required && !b.required) return -1;
+    if (!a.required && b.required) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  let html = "";
 
   // Get existing field defaults
   const existingDefaults = appState.jiraSettings?.field_defaults || {};
 
-  fields.forEach((field) => {
+  sortedFields.forEach((field) => {
     const fieldId = field.id;
     const fieldName = field.name;
     const isRequired = field.required;
@@ -2310,7 +2443,6 @@ function renderFieldDefaultsUI(fields) {
     html += `</div>`;
   });
 
-  html += "</div>";
   container.innerHTML = html;
 }
 

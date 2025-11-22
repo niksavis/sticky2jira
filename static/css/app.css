@@ -14,6 +14,36 @@ body {
   background-color: #f8f9fa;
 }
 
+/* Disabled Button Styling - Uniform across all button types */
+.btn:disabled,
+.btn.disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  background-color: #6c757d !important;
+  border-color: #6c757d !important;
+  color: #fff !important;
+}
+
+/* Outline buttons when disabled */
+.btn-outline-primary:disabled,
+.btn-outline-secondary:disabled,
+.btn-outline-success:disabled,
+.btn-outline-danger:disabled,
+.btn-outline-warning:disabled,
+.btn-outline-info:disabled {
+  background-color: transparent !important;
+  border-color: #dee2e6 !important;
+  color: #6c757d !important;
+  opacity: 0.6 !important;
+}
+
+/* Small buttons maintain consistent disabled styling */
+.btn-sm:disabled,
+.btn-sm.disabled {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+}
+
 .navbar-brand {
   font-weight: 600;
   font-size: 1.5rem;
@@ -115,6 +145,25 @@ body {
   background-color: #f8f9fa;
   border-bottom: 2px solid #dee2e6;
   font-weight: 600;
+}
+
+.card-footer {
+  background-color: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+  padding: 1rem 1.25rem;
+}
+
+.card-footer.bg-light {
+  background-color: #f8f9fa !important;
+}
+
+/* Button grouping in card footers */
+.card-footer .btn {
+  min-width: 120px;
+}
+
+.card-footer .btn-outline-primary {
+  min-width: 150px;
 }
 
 /* Drop Zone */
@@ -501,4 +550,58 @@ body {
 
 .container-fluid {
   flex: 1;
+}
+
+/* Field Defaults Two-Panel Layout */
+#configuredDefaultsList .list-group-item {
+  transition: background-color 0.15s ease;
+}
+
+#configuredDefaultsList .list-group-item:hover {
+  background-color: #f8f9fa;
+}
+
+#configuredDefaultsList .list-group-item:last-child {
+  margin-bottom: 0 !important;
+}
+
+#configuredDefaultsList .btn-outline-danger {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+#configuredDefaultsList .list-group-item:hover .btn-outline-danger {
+  opacity: 1;
+}
+
+.card-header {
+  font-weight: 500;
+  border-bottom: 2px solid #dee2e6;
+}
+
+/* Prevent horizontal overflow in field defaults containers */
+#fieldDefaultsContainer {
+  overflow-x: hidden;
+  overflow-y: auto;
+  word-wrap: break-word;
+}
+
+#configuredDefaultsList {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Ensure form elements don't cause horizontal overflow */
+#fieldDefaultsContainer .form-control,
+#fieldDefaultsContainer .form-select,
+#fieldDefaultsContainer input,
+#fieldDefaultsContainer select {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Prevent field ID text from causing overflow */
+#fieldDefaultsContainer .form-text {
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
