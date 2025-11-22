@@ -657,3 +657,29 @@ body {
     opacity: 0.5;
   }
 }
+
+/* Manual Issue Rows - distinctive styling for manually added issues */
+#issuesTable tbody tr.manual-issue {
+  background-color: #e7f3ff !important;
+  border-left: 3px solid #0d6efd;
+}
+
+#issuesTable tbody tr.manual-issue:hover {
+  background-color: #d0e7ff !important;
+}
+
+#issuesTable tbody tr.manual-issue .color-badge {
+  border: 2px dashed #0d6efd;
+}
+
+/* Manual issue indicator badge */
+.manual-indicator {
+  display: inline-block;
+  padding: 0.25em 0.5em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #0d6efd;
+  background-color: #cfe2ff;
+  border: 1px solid #b6d4fe;
+  border-radius: 0.25rem;
+}

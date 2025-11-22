@@ -180,6 +180,58 @@ def create_issue(issue_data: Dict[str, Any]) -> int:
         return issue_id
 
 
+def create_manual_issue(issue_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Insert a manually created issue (no image source).
+
+    Args:
+        issue_data: Dictionary with summary, description, issue_type, project_key
+
+    Returns:
+        Complete issue dictionary including generated ID
+    """
+    required_fields = ["summary", "project_key", "issue_type"]
+    for field in required_fields:
+        if field not in issue_data:
+            raise ValueError(f"Missing required field: {field}")
+
+    # Use defaults for OCR-specific fields
+    with get_db_connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO issues (
+                image_filename, region_id, color_hex, summary, description,
+                issue_type, project_key, issue_key, confidence,
+                bbox_x, bbox_y, bbox_width, bbox_height
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "manual",  # Mark as manually created
+                -1,  # No region
+                "#000000",  # Default color
+                issue_data.get("summary"),
+                issue_data.get("description", ""),
+                issue_data.get("issue_type"),
+                issue_data.get("project_key"),
+                issue_data.get("issue_key"),
+                100.0,  # Perfect confidence for manual entries
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        issue_id = cursor.lastrowid
+        if issue_id is None:
+            raise RuntimeError("Failed to retrieve issue ID after insert")
+
+        # Fetch and return the complete issue
+        cursor = conn.execute("SELECT * FROM issues WHERE id = ?", (issue_id,))
+        result = dict(cursor.fetchone())
+        logger.info(f"Created manual issue {issue_id}: {issue_data.get('summary')}")
+        return result
+
+
 def bulk_create_issues(issues: List[Dict[str, Any]]) -> int:
     """
     Insert multiple issues efficiently.

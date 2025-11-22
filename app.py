@@ -835,6 +835,36 @@ def delete_issues():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/issues/add", methods=["POST"])
+def add_manual_issue():
+    """Add a manually created issue (not from OCR)."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        # Validate required fields
+        required = ["summary", "project_key", "issue_type"]
+        missing = [f for f in required if not data.get(f)]
+        if missing:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": f"Missing required fields: {', '.join(missing)}",
+                }
+            ), 400
+
+        # Create manual issue
+        issue = session_manager.create_manual_issue(data)
+        app.logger.info(
+            f"Added manual issue: {issue['summary']} ({issue['project_key']}/{issue['issue_type']})"
+        )
+        return jsonify({"success": True, "issue": issue})
+    except Exception as e:
+        app.logger.error(f"Add manual issue failed: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/issues/<int:issue_id>", methods=["PUT"])
 def update_issue(issue_id):
     """Update a single issue by ID (for inline editing)."""

@@ -952,6 +952,13 @@ function renderColorMappingsUI(projectKey, savedMappings = {}) {
 
   // Render color-to-issue-type mappings with saved values
   let colorHtml = "<h6>Color to Issue Type Mapping</h6>";
+
+  // Create datalist ID for issue types (shared across all color mappings)
+  const datalistId = `issueTypes-${projectKey}`;
+  const issueTypeOptions = appState.issueTypes[projectKey]
+    .map((it) => `<option value="${it.name}">`)
+    .join("");
+
   colorMap.forEach((name, hex) => {
     const savedIssueType = savedMappings[hex] || "";
 
@@ -959,20 +966,21 @@ function renderColorMappingsUI(projectKey, savedMappings = {}) {
       <div class="color-mapping-row mb-2">
         <span class="color-badge" style="background-color: ${hex};"></span>
         <label class="color-name-label">${name}</label>
-        <select class="form-select color-mapping-select" data-color="${hex}" style="max-width: 300px;">
-          <option value="">Select issue type...</option>
-          ${appState.issueTypes[projectKey]
-            .map(
-              (it) =>
-                `<option value="${it.name}" ${
-                  it.name === savedIssueType ? "selected" : ""
-                }>${it.name}</option>`
-            )
-            .join("")}
-        </select>
+        <input type="text" 
+               class="form-control color-mapping-select" 
+               data-color="${hex}" 
+               list="${datalistId}"
+               value="${savedIssueType}"
+               placeholder="Type to search issue types..."
+               autocomplete="off"
+               style="max-width: 300px;">
       </div>
     `;
   });
+
+  // Add single datalist at the end (shared by all inputs)
+  colorHtml += `<datalist id="${datalistId}">${issueTypeOptions}</datalist>`;
+
   container.innerHTML = colorHtml;
 
   // Apply saved mappings to regions
@@ -1730,6 +1738,78 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // Add Issue button - add manual issue
+  document.getElementById("addIssueBtn")?.addEventListener("click", () => {
+    if (!appState.jiraSettings?.default_project_key) {
+      showToast("Please configure Jira settings first (click ⚙️)", "warning");
+      return;
+    }
+
+    // Create new manual issue with defaults
+    const newIssue = {
+      summary: "New Issue",
+      description: "",
+      project_key: appState.jiraSettings.default_project_key,
+      issue_type: "Story",
+    };
+
+    // Send to backend
+    fetch("/api/issues/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newIssue),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          // Add to frontend state
+          const issue = data.issue;
+          appState.ocrRegions.push({
+            id: issue.id,
+            db_id: issue.id,
+            image_filename: "manual",
+            color_hex: "#000000",
+            color_name: "manual",
+            text: issue.summary,
+            linked_text: issue.description || "",
+            project_key: issue.project_key,
+            issue_type: issue.issue_type,
+            issue_key: issue.issue_key,
+            confidence: 100,
+            bbox: null,
+            manual: true, // Flag for styling
+          });
+
+          populateReviewTable();
+          updateActionBar();
+          showToast("Issue added. Click to edit inline.", "success", 3000);
+
+          // Auto-focus on the summary field of the new row
+          setTimeout(() => {
+            const newRowIndex = appState.ocrRegions.length - 1;
+            const summaryCell = document.querySelector(
+              `#issuesTable [data-field="summary"][data-id="${newRowIndex}"]`
+            );
+            if (summaryCell) {
+              summaryCell.focus();
+              // Select all text for easy replacement
+              const range = document.createRange();
+              range.selectNodeContents(summaryCell);
+              const selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+          }, 100);
+        } else {
+          showToast(`Failed to add issue: ${data.error}`, "danger");
+        }
+      })
+      .catch((error) => {
+        console.error("Add issue error:", error);
+        showToast("Failed to add issue", "danger");
+      });
+  });
+
   // Delete All button
   document.getElementById("deleteAllBtn")?.addEventListener("click", () => {
     const totalIssues = appState.ocrRegions.length;
@@ -1956,22 +2036,30 @@ function populateReviewTable() {
         }" target="_blank" class="badge bg-success">${region.issue_key}</a>`
       : '<span class="badge bg-secondary">-</span>';
 
+    // Determine if this is a manual issue
+    const isManual = region.manual || region.image_filename === "manual";
+    const imageDisplay = isManual
+      ? '<span class="manual-indicator">MANUAL</span>'
+      : region.image_filename
+      ? `<img src="/uploads/${region.image_filename}" 
+           alt="Thumbnail" 
+           class="img-thumbnail preview-thumbnail" 
+           style="width: 60px; height: 60px; object-fit: cover; cursor: pointer;"
+           data-filename="${region.image_filename}"
+           onclick="showImagePreview('${region.image_filename}')">`
+      : '<span class="text-muted">-</span>';
+
     const row = tbody.insertRow();
+
+    // Add manual-issue class if this is a manually created issue
+    if (isManual) {
+      row.classList.add("manual-issue");
+    }
+
     row.innerHTML = `
       <td data-label="Select"><input type="checkbox" class="row-checkbox" data-index="${index}"></td>
       <td data-label="ID">${index + 1}</td>
-      <td data-label="Image">
-        ${
-          region.image_filename
-            ? `<img src="/uploads/${region.image_filename}" 
-                 alt="Thumbnail" 
-                 class="img-thumbnail preview-thumbnail" 
-                 style="width: 60px; height: 60px; object-fit: cover; cursor: pointer;"
-                 data-filename="${region.image_filename}"
-                 onclick="showImagePreview('${region.image_filename}')">`
-            : '<span class="text-muted">-</span>'
-        }
-      </td>
+      <td data-label="Image">${imageDisplay}</td>
       <td data-label="Color"><span class="color-badge" style="background-color: ${
         region.color_hex
       };"></span></td>
@@ -2254,6 +2342,7 @@ function updateActionBar() {
   const selectedCountSpan = document.getElementById("selectedCount");
   const deleteAllBtn = document.getElementById("deleteAllBtn");
   const importBtn = document.getElementById("startImportBtn");
+  const addIssueBtn = document.getElementById("addIssueBtn");
 
   // Bulk action controls
   const selectAllBtn = document.getElementById("selectAllBtn");
@@ -2298,6 +2387,15 @@ function updateActionBar() {
   // Enable/disable primary action buttons
   const hasJiraConfig =
     appState.jiraSettings && appState.jiraSettings.server_url;
+
+  // Add Issue: enabled when Jira is configured
+  if (hasJiraConfig && appState.jiraSettings.default_project_key) {
+    addIssueBtn.disabled = false;
+    addIssueBtn.removeAttribute("title");
+  } else {
+    addIssueBtn.disabled = true;
+    addIssueBtn.setAttribute("title", "Configure Jira settings first");
+  }
 
   // Delete All: enabled when there are issues
   if (totalIssues > 0) {
