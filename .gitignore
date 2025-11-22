@@ -221,7 +221,6 @@ bin/
 .encryption_key
 uploads/
 session.db
-jira_templates/
 app.log
 errors.log
 launch.bat
@@ -230,16 +229,10 @@ static/libs/
 
 # Test outputs and temporary files
 test_output/
-test_*.txt
-clustering_test_output.txt
+*.log
 
-# Debug/diagnostic scripts (keep in tests/ directory instead)
-analyze_sticky_detection.py
-debug_color_detection.py
-test_clustering_thresholds.py
-test_improved_detection.py
-test_ocr_detection.py
-test_paddle_format.py
+# Temporary analysis scripts in root only (use tools/ folder for keepers)
+/test_*.py
+/debug_*.py
+/analyze_*.py
 
-# Solution notes (personal documentation)
-SOLUTION_NOTES.md

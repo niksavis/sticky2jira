@@ -2,8 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/niksavis/sticky2jira)
 
-Browser-based local application that extracts text from sticky note images using OCR and creates/updates Jira issues.
+Browser-based local application that extracts text from sticky note images using OCR and creates/updates Jira issues. **100% local processing - no cloud APIs.**
 
 ## Features
 
@@ -35,8 +36,6 @@ Browser-based local application that extracts text from sticky note images using
    - Create Python virtual environment (`.venv`)
    - Install all Python dependencies including PaddleOCR (pure Python, no binaries)
    - Download frontend libraries (Bootstrap, jQuery, DataTables, Socket.IO)
-   - Create `.env` configuration file
-   - Generate `launch.bat` startup script
 
 3. **Wait for installation to complete** (may take 5-10 minutes for PaddleOCR and dependencies)
 
@@ -48,123 +47,73 @@ Browser-based local application that extracts text from sticky note images using
 
    Browser opens automatically to `http://localhost:5000`
 
-## Quick Start Guide
+## Quick Start
 
-### 1. Configure Jira Connection
+1. **Upload**: Drop sticky note image → OCR runs automatically
+2. **OCR Review**: View detected regions with confidence scores → Proceed to Mapping
+3. **Mapping**: Assign sticky colors to issue types (Story/Bug/Task) → Proceed to Issue Review
+4. **Import**: Review/edit issues → Click "Import" button
+5. **Results**: View import summary with clickable Jira issue links
 
-- **Setup Tab**: Enter Jira server URL, username, and API token ([create token](https://id.atlassian.com/manage-profile/security/api-tokens))
-- Click "Test Connection" then "Save Settings"
+**Setup:** Click ⚙️ icon in header → Enter Jira URL and API token → Test → Save  
+**Tips:** Issues with `issue_key` are updated (no duplicates). Click "New Session" to clear all data.
 
-### 2. Process Sticky Note Image
+## Advanced Configuration
 
-- **Upload Tab**: Select image (max 5MB), click "Upload Image"
-- **OCR Tab**: Click "Start OCR Processing", wait for text extraction
-- **Mapping Tab**: Select project, map sticky colors to issue types (Task/Bug/Story)
+**OCR Parameters** (`services/ocr_service.py`):
 
-### 3. Review and Import
+```python
+DEFAULT_HSV_TOLERANCE = 20   # Color sensitivity
+DEFAULT_MIN_SIZE = 1500      # Min sticky size (pixels)
+DEFAULT_PROXIMITY = 100      # Text clustering distance
+```
 
-- **Issues Tab**: Review detected issues, edit summaries/descriptions inline
-- **Import Tab**: Click "Start Import" to create/update Jira issues
-- **Results Tab**: View import summary with clickable Jira links
+**Server Settings** (optional `.env` file):
 
-### Tips
-
-- **Prevent duplicates**: Issues with existing `issue_key` are updated, not recreated
-- **Multi-image workflow**: Click "New Import" before processing new images
-- **Best image quality**: 300+ DPI, high contrast, clear text
-
-## Configuration
-
-### Environment Variables (`.env`)
-
-Optional `.env` file for custom settings (created by `install.bat`, but currently empty by default):
+By default, the app runs on `http://127.0.0.1:5000`. To customize Flask settings, create a `.env` file in the project root:
 
 ```bash
-# Flask server settings
 FLASK_HOST=127.0.0.1
-FLASK_PORT=5000
+FLASK_PORT=5000       # Change if port 5000 is in use
 FLASK_DEBUG=False
 ```
 
-### Advanced OCR Tuning
+*Note: `.env` file is optional - the app works without it using default values.*
 
-Edit `services/ocr_service.py` constants:
-
-```python
-DEFAULT_HSV_TOLERANCE = 20  # Color detection sensitivity
-DEFAULT_MIN_SIZE = 50       # Minimum sticky note size (pixels)
-DEFAULT_PROXIMITY = 100     # Linking threshold (pixels)
-```
-
-### OCR Color Ranges
-
-The application supports 11 colors based on HSV analysis. Modify `services/ocr_service.py` to adjust ranges:
-
-```python
-OCR_COLOR_RANGES = {
-    'red': (np.array([0, 60, 200]), np.array([8, 255, 255])),      # H=0-8
-    'orange': (np.array([9, 80, 200]), np.array([22, 255, 255])),  # H=9-22
-    'yellow': (np.array([23, 60, 200]), np.array([37, 255, 255])), # H=23-37
-    'lime': (np.array([38, 60, 180]), np.array([65, 255, 255])),   # H=38-65 (yellow-green)
-    'green': (np.array([66, 60, 180]), np.array([84, 255, 255])),  # H=66-84
-    'cyan': (np.array([85, 50, 200]), np.array([100, 255, 255])),  # H=85-100 (teal)
-    'blue': (np.array([101, 50, 200]), np.array([117, 255, 255])), # H=101-117
-    'violet': (np.array([118, 50, 200]), np.array([154, 255, 255])), # H=118-154
-    'pink': (np.array([155, 30, 200]), np.array([180, 255, 255])), # H=155-180
-    'gray': (np.array([0, 0, 180]), np.array([180, 30, 255])),     # Low saturation
-    'black': (np.array([0, 0, 0]), np.array([180, 255, 100])),     # Low value
-}
-```
+**Supported Colors:** Red, orange, yellow, lime, green, cyan, blue, violet, pink, gray, black (11 total)
 
 ## Project Structure
 
 ```text
 sticky2jira/
-├── app.py                      # Flask application entry point
-├── install.bat                 # Automated installation script
-├── launch.bat                  # Startup script (generated by install.bat)
-├── download_libs.bat           # Frontend library downloader
-├── requirements.in             # Source dependencies
-├── requirements.txt            # Compiled dependencies (generated)
-├── .env                        # Environment configuration
-├── .gitignore                  # Git ignore rules
-├── services/                   # Business logic layer
-│   ├── session_manager.py      # SQLite database operations
+├── app.py                      # Flask server + SocketIO
+├── __version__.py              # Version info (1.0.0)
+├── install.bat                 # One-command setup
+├── services/                   # Business logic
+│   ├── ocr_service.py          # PaddleOCR + OpenCV (11 colors)
 │   ├── jira_service.py         # Jira API integration
-│   ├── ocr_service.py          # OCR processing with OpenCV/PaddleOCR
-│   └── crypto_utils.py         # AES-128 encryption for API tokens
-├── templates/                  # HTML templates
-│   └── index.html              # Main SPA interface
-├── static/                     # Frontend assets
-│   ├── css/
-│   │   └── app.css             # Custom styles
-│   ├── js/
-│   │   └── app.js              # Application logic + SocketIO
-│   └── libs/                   # Self-hosted libraries
-│       ├── bootstrap-5.3.0/
-│       ├── jquery-3.7.0/
-│       ├── datatables-1.13/
-│       └── socket.io-4.5.4/
-├── uploads/                    # Uploaded images (git-ignored)
-├── jira_templates/             # Generated Jira field templates (git-ignored)
-├── session.db                  # SQLite database
-├── app.log                     # Application logs
-└── errors.log                  # Error logs
+│   ├── session_manager.py      # SQLite operations
+│   └── crypto_utils.py         # AES-128 encryption
+├── templates/index.html        # 7-tab wizard UI
+├── static/                     # Frontend assets (self-hosted)
+│   ├── js/app.js               # Vanilla JS + SocketIO
+│   ├── css/app.css             # Custom styles
+│   └── libs/                   # Bootstrap, jQuery, DataTables
+├── tests/                      # Pytest suite (15 tests)
+├── tools/                      # Development utilities
+└── test_images/                # OCR validation images
 ```
 
 ## Troubleshooting
 
-**OCR not working**: Ensure Python 3.8+, reinstall dependencies: `.venv\Scripts\activate` then `pip install --upgrade paddleocr paddlepaddle`
-
-**Blank page**: Run `download_libs.bat` to download Bootstrap/jQuery/DataTables/Socket.IO to `static/libs/`
-
-**Poor text extraction**: Use 300+ DPI images, adjust `DEFAULT_HSV_TOLERANCE` in `services/ocr_service.py`
-
-**Jira connection fails**: Verify URL format `https://company.atlassian.net` (no trailing slash), check API token validity
-
-**Duplicate issues**: Click "New Import" before processing new images (issues with `issue_key` are updated, not recreated)
-
-**Port conflict**: Create `.env` file and set `FLASK_PORT=5001`
+| Issue              | Solution                                                                   |
+| ------------------ | -------------------------------------------------------------------------- |
+| **Blank page**     | Run `download_libs.bat` to get Bootstrap/jQuery/DataTables                 |
+| **OCR errors**     | Reinstall: `.venv\Scripts\activate` then `pip install --upgrade paddleocr` |
+| **Poor detection** | Use higher resolution images (300+ DPI), good lighting                     |
+| **Jira fails**     | Check URL format: `https://company.atlassian.net` (no trailing slash)      |
+| **Port conflict**  | Create `.env` with `FLASK_PORT=5001`                                       |
+| **Duplicates**     | Click "New Import" to clear session before new images                      |
 
 ## Security & Privacy
 
@@ -185,10 +134,6 @@ sticky2jira/
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## Acknowledgments
 
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) - Pure Python OCR engine
@@ -197,5 +142,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-**Status:** Beta  
-**Last Updated:** November 22, 2025
+**Version:** 1.0.0 | **Status:** Production Ready ✅  
+**Last Updated:** November 22, 2025 | **License:** MIT

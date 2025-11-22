@@ -3,8 +3,6 @@ Jira Service - Handles Jira API operations for sticky2jira.
 Connection management, field discovery, issue creation/update with progress callbacks.
 """
 
-import os
-import json
 import logging
 import urllib3
 from typing import Dict, List, Optional, Any, Callable
@@ -16,8 +14,6 @@ from jira.exceptions import JIRAError
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
-
-TEMPLATES_DIR = "jira_templates"
 
 
 # ============================================================================
@@ -39,9 +35,6 @@ class JiraService:
         self.server_url = server_url.rstrip("/")
         self.api_token = api_token
         self._client: Optional[JIRA] = None
-
-        # Ensure templates directory exists
-        os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
     @property
     def client(self) -> JIRA:
@@ -143,7 +136,7 @@ class JiraService:
             raise
 
     # ============================================================================
-    # Field Discovery and Template Generation
+    # Field Discovery
     # ============================================================================
 
     def get_create_fields(self, project_key: str, issue_type: str) -> Dict[str, Any]:
@@ -335,65 +328,6 @@ class JiraService:
         except Exception as e:
             logger.debug(f"Failed to fetch options for {field_id}: {e}")
             return None
-
-    def generate_template(self, project_key: str, issue_type: str) -> str:
-        """
-        Generate field template JSON file for a project/issue type combination.
-
-        Args:
-            project_key: Jira project key
-            issue_type: Issue type name
-
-        Returns:
-            Path to generated template file
-        """
-        try:
-            field_meta = self.get_create_fields(project_key, issue_type)
-
-            # Build template structure
-            template = {
-                "project_key": project_key,
-                "issue_type": issue_type,
-                "fields": {},
-            }
-
-            for field_id, field_info in field_meta.items():
-                template["fields"][field_id] = {
-                    "name": field_info.get("name"),
-                    "required": field_info.get("required", False),
-                    "schema": field_info.get("schema", {}),
-                    "allowed_values": self._extract_allowed_values(field_info),
-                }
-
-            # Save template
-            template_filename = f"{project_key}_{issue_type}_template.json"
-            template_path = os.path.join(TEMPLATES_DIR, template_filename)
-
-            with open(template_path, "w", encoding="utf-8") as f:
-                json.dump(template, f, indent=2)
-
-            logger.info(f"Generated template: {template_path}")
-            return template_path
-        except Exception as e:
-            logger.error(f"Template generation failed: {str(e)}", exc_info=True)
-            raise
-
-    def _extract_allowed_values(
-        self, field_info: Dict[str, Any]
-    ) -> Optional[List[str]]:
-        """Extract allowed values from field metadata."""
-        allowed_values = field_info.get("allowedValues")
-        if not allowed_values:
-            return None
-
-        # Handle different value types (string, object with name/value)
-        values = []
-        for val in allowed_values:
-            if isinstance(val, dict):
-                values.append(val.get("name") or val.get("value"))
-            else:
-                values.append(str(val))
-        return values
 
     # ============================================================================
     # Issue Creation and Update

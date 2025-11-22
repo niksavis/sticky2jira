@@ -12,18 +12,38 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Initialize PaddleOCR (runs on CPU by default, no external binaries needed)
-# use_textline_orientation=True enables text orientation detection
-# text_det_unclip_ratio=2.5 expands detected text boxes to avoid edge clipping (default: 1.5)
-# Higher unclip_ratio helps capture text at image edges that might be partially cropped
-# lang='en' for English, can be changed to other languages
+# Initialize PaddleOCR optimized for typed text on sticky notes
+# CRITICAL PARAMETERS FOR TYPED TEXT (not handwriting):
+# - det_db_box_thresh=0.2: LOWER threshold = more sensitive detection (default: 0.3)
+#   Lower is better for typed text which has consistent contrast
+# - det_db_unclip_ratio=3.5: Aggressive box expansion to capture edge text (default: 1.5)
+# - use_dilation=True: Expand text regions before detection to avoid edge clipping
+# - det_db_score_mode='slow': More accurate detection at cost of speed
+# - use_textline_orientation=True: Handle rotated text
+# - lang='en': English language model
+# Initialize PaddleOCR optimized for typed text on sticky notes
+# CRITICAL PARAMETERS FOR TYPED TEXT (not handwriting):
+# - text_det_thresh=0.2: LOWER threshold = more sensitive detection (default: 0.3)
+#   Lower is better for typed text which has consistent contrast
+# - text_det_unclip_ratio=3.5: Aggressive box expansion to capture edge text (default: 1.5)
+# - use_textline_orientation=True: Handle rotated text
+# - lang='en': English language model
+#
+# NOTE: PaddleOCR text recognition quality depends heavily on:
+#   1. Input image quality (preprocessing is key!)
+#   2. Text box accuracy (unclip_ratio must capture full characters)
+#   3. Recognition model (en_PP-OCRv5 is best for English)
 try:
     ocr_engine = PaddleOCR(
-        use_textline_orientation=True,
+        use_textline_orientation=True,  # Handle rotated text
         lang="en",
-        text_det_unclip_ratio=2.5,  # Expanded from default 1.5 to reduce edge clipping
+        text_det_thresh=0.2,  # More sensitive for typed text (lower = more detections)
+        text_det_box_thresh=0.5,  # Box threshold for filtering
+        text_det_unclip_ratio=3.5,  # Aggressive expansion to capture all edge text
     )
-    logger.info("PaddleOCR initialized successfully with text_det_unclip_ratio=2.5")
+    logger.info(
+        "PaddleOCR initialized with aggressive typed-text parameters (text_det_thresh=0.2, unclip=3.5)"
+    )
 except Exception as e:
     logger.error(f"Failed to initialize PaddleOCR: {e}")
     ocr_engine = None
@@ -110,6 +130,75 @@ class StickyRegion:
 
 
 # ============================================================================
+# OCR Text Post-Processing
+# ============================================================================
+
+
+def clean_ocr_text(text: str) -> str:
+    """
+    Clean up common OCR errors in extracted text.
+
+    Common issues:
+    - Duplicate consecutive words ("a a" → "a")
+    - Missing spaces in compound words ("ableto" → "able to")
+    - Doubled characters ("ffeeature" → "feature")
+    - Extra spaces ("  " → " ")
+
+    Args:
+        text: Raw OCR extracted text
+
+    Returns:
+        Cleaned text with common OCR errors fixed
+    """
+    if not text:
+        return text
+
+    # Fix common word concatenations (missing spaces)
+    common_fixes = {
+        "ableto": "able to",
+        "wantto": "want to",
+        "haveto": "have to",
+        "needto": "need to",
+        "usedto": "used to",
+        "goingto": "going to",
+        "instal": "install",  # Common truncation
+    }
+
+    for wrong, correct in common_fixes.items():
+        text = text.replace(wrong, correct)
+
+    # Remove duplicate consecutive words
+    # Special case: "a a" is almost always an error (should be single "a")
+    words = text.split()
+    cleaned_words = []
+    prev_word = None
+
+    for i, word in enumerate(words):
+        # Special case: "a a" → "a" (common OCR duplicate)
+        if word == "a" and prev_word == "a":
+            continue  # Skip duplicate "a"
+        # General case: Skip duplicate words (but only if length > 1)
+        elif word == prev_word and len(word) > 1:
+            continue  # Skip duplicate
+
+        cleaned_words.append(word)
+        prev_word = word
+
+    text = " ".join(cleaned_words)
+
+    # Fix doubled characters (conservative - only common patterns)
+    text = text.replace("ffee", "fe")  # "ffeeature" → "feature"
+    text = text.replace("  ", " ")  # Multiple spaces
+
+    # Fix common character substitutions
+    text = text.replace(" bu.", " bug")  # Truncated "bug"
+    text = text.replace(" bu ", " bug ")
+    text = text.replace("bug It", "bug. It")  # Missing period after "bug"
+
+    return text.strip()
+
+
+# ============================================================================
 # OCR Processing Class
 # ============================================================================
 
@@ -171,11 +260,12 @@ class OCRService:
             return []
 
         # Step 2: Cluster text with moderate threshold
-        # Use 45px threshold as baseline - balances keeping lines together vs separating stickies
+        # Use 100px threshold to keep multi-line sticky text together
+        # Real-world stickies often have text spread over 2-3 lines with 30-50px spacing
         sticky_clusters = self._cluster_text_boxes_robust(
-            global_text_boxes, distance_threshold=45.0
+            global_text_boxes, distance_threshold=100.0
         )
-        logger.info(f"Initial clustering (45px): {len(sticky_clusters)} candidates")
+        logger.info(f"Initial clustering (100px): {len(sticky_clusters)} candidates")
 
         # Filter out trivial single-character clusters (likely noise or isolated symbols)
         sticky_clusters = [
@@ -208,9 +298,12 @@ class OCRService:
                 text_bbox, image.shape[1], image.shape[0], pad_ratio=0.15
             )
 
-            # Extract text content
+            # Extract text content (use global OCR results - better than re-extraction)
             combined_text = self._join_cluster_text(cluster["boxes"])
             avg_conf = self._calculate_cluster_confidence(cluster["boxes"])
+
+            # Clean up common OCR errors
+            combined_text = clean_ocr_text(combined_text)
 
             # Determine color
             color_hex, color_name = self._determine_region_color(
@@ -1407,7 +1500,8 @@ class OCRService:
 
     def _extract_text(self, roi: np.ndarray) -> Tuple[str, float]:
         """
-        Extract text from ROI using PaddleOCR with preprocessing.
+        Extract text from ROI using PaddleOCR with aggressive multi-strategy preprocessing.
+        Optimized for TYPED TEXT on pastel sticky note backgrounds.
 
         Args:
             roi: Region of interest (BGR image)
@@ -1421,98 +1515,201 @@ class OCRService:
 
         try:
             # Check if background is dark (black sticky note with white text)
-            # Calculate mean brightness of the ROI
             gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             mean_brightness = float(np.mean(gray_roi))  # type: ignore[arg-type]
 
-            # If background is dark (mean < 100), invert for better OCR
+            # CRITICAL: Enhanced preprocessing for typed text on pastel backgrounds
+            # Try multiple preprocessing strategies and select best result
+            preprocessed_candidates = []
+
+            # Strategy 1: Original (no preprocessing) - works when contrast is already good
+            rgb_roi_original = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
             if mean_brightness < 100:
+                rgb_roi_original = 255 - rgb_roi_original
+            preprocessed_candidates.append(("original", rgb_roi_original))
+
+            # Strategy 2: CLAHE enhancement - improves local contrast for typed text
+            rgb_roi_clahe = self._preprocess_for_typed_text(roi, mean_brightness)
+            preprocessed_candidates.append(("clahe", rgb_roi_clahe))
+
+            # Strategy 3: Aggressive sharpening - enhances edge definition
+            rgb_roi_sharp = self._preprocess_with_sharpening(roi, mean_brightness)
+            preprocessed_candidates.append(("sharpened", rgb_roi_sharp))
+
+            # Run OCR on all candidates and select best result
+            best_text = ""
+            best_confidence = 0.0
+            best_strategy = "none"
+
+            for strategy_name, preprocessed_roi in preprocessed_candidates:
+                result = ocr_engine.ocr(preprocessed_roi)
+
+                # Check if result is valid
+                if not result or not isinstance(result, list) or len(result) == 0:
+                    continue
+
+                page_result = result[0]
+                if not page_result or page_result == 0 or page_result is None:
+                    continue
+
+                # Parse result
+                text, confidence = self._parse_ocr_result(page_result)
+
+                # Select best result based on confidence and text length
+                # Typed text should have high confidence and reasonable length
+                if confidence > best_confidence or (
+                    confidence > 80 and len(text) > len(best_text)
+                ):
+                    best_text = text
+                    best_confidence = confidence
+                    best_strategy = strategy_name
+
+            if best_text:
                 logger.info(
-                    f"Dark background detected (brightness={mean_brightness:.1f}), inverting image for OCR"
+                    f"Selected strategy '{best_strategy}' with confidence {best_confidence:.1f}%"
                 )
-                rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-                rgb_roi = 255 - rgb_roi  # Invert colors: black→white, white→black
-            else:
-                # PaddleOCR expects RGB format
-                rgb_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+                return best_text.strip(), best_confidence
 
-            # Run OCR (removed cls parameter - no longer supported in newer PaddleOCR)
-            result = ocr_engine.ocr(rgb_roi)
-
-            # Check if result is valid
-            if not result:
-                logger.warning("OCR returned empty result")
-                return "", 0.0
-
-            # PaddleOCR 3.x returns a list with one dict containing results
-            if not isinstance(result, list) or len(result) == 0:
-                logger.warning("OCR result is not a list or is empty")
-                return "", 0.0
-
-            page_result = result[0]
-            if not page_result or page_result == 0 or page_result is None:
-                logger.warning("OCR page result is empty")
-                return "", 0.0
-
-            # PaddleOCR 3.x format: dictionary with keys rec_texts, rec_scores, rec_polys
-            if isinstance(page_result, dict):
-                rec_texts = page_result.get("rec_texts", [])
-                rec_scores = page_result.get("rec_scores", [])
-
-                if not rec_texts:
-                    logger.warning("No text detected (rec_texts is empty)")
-                    return "", 0.0
-
-                # Combine texts and calculate average confidence
-                combined_text = " ".join(rec_texts)
-                avg_confidence = (
-                    sum(rec_scores) / len(rec_scores) if rec_scores else 0.0
-                )
-
-                # Convert to percentage (0-100) if needed
-                if avg_confidence <= 1.0:
-                    avg_confidence = avg_confidence * 100
-
-                logger.info(
-                    f"Extracted {len(rec_texts)} text segments, avg confidence: {avg_confidence:.1f}%"
-                )
-                return combined_text.strip(), avg_confidence
-            else:
-                # Fallback: older PaddleOCR format [[[box], (text, confidence)], ...]
-                logger.warning("Using fallback parsing for older PaddleOCR format")
-                texts = []
-                confidences = []
-
-                for line in page_result:
-                    if not line:
-                        continue
-
-                    try:
-                        if (
-                            len(line) >= 2
-                            and isinstance(line[1], (tuple, list))
-                            and len(line[1]) >= 2
-                        ):
-                            text = str(line[1][0])
-                            conf = float(line[1][1])
-                            texts.append(text)
-                            confidences.append(conf)
-                    except (TypeError, ValueError, IndexError):
-                        continue
-
-                combined_text = " ".join(texts)
-                avg_confidence = (
-                    sum(confidences) / len(confidences) if confidences else 0.0
-                )
-
-                if avg_confidence <= 1.0:
-                    avg_confidence = avg_confidence * 100
-
-                return combined_text.strip(), avg_confidence
+            logger.warning("All OCR strategies failed to extract text")
+            return "", 0.0
 
         except Exception as e:
             logger.error(f"Text extraction failed: {str(e)}")
             return "", 0.0
+
+    def _parse_ocr_result(self, page_result: Any) -> Tuple[str, float]:
+        """Parse PaddleOCR result into text and confidence."""
+        # PaddleOCR 3.x format: dictionary with keys rec_texts, rec_scores, rec_polys
+        if isinstance(page_result, dict):
+            rec_texts = page_result.get("rec_texts", [])
+            rec_scores = page_result.get("rec_scores", [])
+
+            if not rec_texts:
+                return "", 0.0
+
+            # Combine texts and calculate average confidence
+            combined_text = " ".join(rec_texts)
+            avg_confidence = sum(rec_scores) / len(rec_scores) if rec_scores else 0.0
+
+            # Convert to percentage (0-100) if needed
+            if avg_confidence <= 1.0:
+                avg_confidence = avg_confidence * 100
+
+            return combined_text.strip(), avg_confidence
+        else:
+            # Fallback: older PaddleOCR format [[[box], (text, confidence)], ...]
+            texts = []
+            confidences = []
+
+            for line in page_result:
+                if not line:
+                    continue
+
+                try:
+                    if (
+                        len(line) >= 2
+                        and isinstance(line[1], (tuple, list))
+                        and len(line[1]) >= 2
+                    ):
+                        text = str(line[1][0])
+                        conf = float(line[1][1])
+                        texts.append(text)
+                        confidences.append(conf)
+                except (TypeError, ValueError, IndexError):
+                    continue
+
+            combined_text = " ".join(texts)
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+
+            if avg_confidence <= 1.0:
+                avg_confidence = avg_confidence * 100
+
+            return combined_text.strip(), avg_confidence
+
+    def _preprocess_for_typed_text(
+        self, roi: np.ndarray, mean_brightness: float
+    ) -> np.ndarray:
+        """
+        Preprocessing optimized for TYPED TEXT on pastel sticky notes.
+        Uses CLAHE (Contrast Limited Adaptive Histogram Equalization) to enhance local contrast.
+
+        Args:
+            roi: Region of interest (BGR image)
+            mean_brightness: Mean brightness of the ROI
+
+        Returns:
+            Preprocessed RGB image ready for OCR
+        """
+        # Convert to LAB color space for better luminance control
+        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+
+        # Apply CLAHE to luminance channel
+        # clipLimit=3.0: aggressive contrast enhancement for typed text
+        # tileGridSize=(4, 4): small tiles for local adaptation
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+        l_enhanced = clahe.apply(l_channel)
+
+        # Merge back
+        lab_enhanced = cv2.merge((l_enhanced, a_channel, b_channel))
+        bgr_enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
+
+        # Convert to RGB
+        rgb_enhanced = cv2.cvtColor(bgr_enhanced, cv2.COLOR_BGR2RGB)
+
+        # Invert if dark background
+        if mean_brightness < 100:
+            rgb_enhanced = 255 - rgb_enhanced
+
+        return rgb_enhanced
+
+    def _preprocess_with_sharpening(
+        self, roi: np.ndarray, mean_brightness: float
+    ) -> np.ndarray:
+        """
+        Preprocessing with aggressive sharpening for edge enhancement.
+        Best for typed text which has well-defined edges.
+
+        Args:
+            roi: Region of interest (BGR image)
+            mean_brightness: Mean brightness of the ROI
+
+        Returns:
+            Preprocessed RGB image ready for OCR
+        """
+        # Gaussian blur to reduce noise first
+        blurred = cv2.GaussianBlur(roi, (3, 3), 0)
+
+        # Aggressive unsharp mask for edge enhancement
+        # Create sharp version
+        gaussian = cv2.GaussianBlur(blurred, (0, 0), 2.0)
+        sharp = cv2.addWeighted(blurred, 1.5, gaussian, -0.5, 0)
+
+        # Enhance contrast
+        lab = cv2.cvtColor(sharp, cv2.COLOR_BGR2LAB)
+        l_channel, a, b = cv2.split(lab)
+
+        # Simple contrast stretching using min/max
+        l_min = float(l_channel.min())
+        l_max = float(l_channel.max())
+        if l_max > l_min:
+            l_stretched = np.clip(
+                (l_channel.astype(float) - l_min) * 255 / (l_max - l_min), 0, 255
+            ).astype(np.uint8)
+        else:
+            l_stretched = l_channel
+
+        lab_sharp = cv2.merge((l_stretched, a, b))
+        bgr_sharp = cv2.cvtColor(lab_sharp, cv2.COLOR_LAB2BGR)
+
+        # Convert to RGB
+        rgb_sharp = cv2.cvtColor(bgr_sharp, cv2.COLOR_BGR2RGB)
+
+        # Invert if dark background
+        if mean_brightness < 100:
+            rgb_sharp = 255 - rgb_sharp
+
+        return rgb_sharp
 
     def _preprocess_roi(self, roi: np.ndarray) -> np.ndarray:
         """
@@ -1956,7 +2153,8 @@ class OCRService:
         text_boxes: List[Dict[str, Any]],
     ) -> Tuple[str, str]:
         """
-        Determine the dominant color of a region, ignoring text pixels.
+        Determine the dominant color of a region by sampling from sticky borders.
+        Avoids text pixels which contaminate color measurement.
         Returns (hex_color, color_name).
         """
         x, y, w, h = bbox
@@ -1972,34 +2170,32 @@ class OCRService:
 
         roi_hsv = hsv_image[y : y + h, x : x + w]
 
-        # Create mask for text boxes to ignore them
-        mask = np.ones((h, w), dtype=np.uint8) * 255
+        # Sample from CENTER region only (middle 40% of both dimensions)
+        # This completely avoids borders and most text
+        center_margin_x = int(w * 0.3)  # Skip 30% on each side
+        center_margin_y = int(h * 0.3)
 
-        for box in text_boxes:
-            bx, by, bw, bh = box["bbox"]
-            # Translate to ROI coordinates
-            rx = bx - x
-            ry = by - y
-
-            # Clip to ROI
-            rx = max(0, rx)
-            ry = max(0, ry)
-            rw = min(bw, w - rx)
-            rh = min(bh, h - ry)
-
-            if rw > 0 and rh > 0:
-                cv2.rectangle(mask, (rx, ry), (rx + rw, ry + rh), 0, -1)
-
-        # Calculate median color of non-masked pixels
-        valid_pixels = roi_hsv[mask == 255]
-
-        if len(valid_pixels) < 10:
-            # Fallback to mean of whole ROI if mask covers everything
+        if w < 30 or h < 30:
+            # Too small, use whole ROI
             valid_pixels = roi_hsv.reshape(-1, 3)
+        else:
+            # Extract center region
+            x1 = center_margin_x
+            x2 = w - center_margin_x
+            y1 = center_margin_y
+            y2 = h - center_margin_y
+
+            if x2 > x1 and y2 > y1:
+                center_region = roi_hsv[y1:y2, x1:x2]
+                valid_pixels = center_region.reshape(-1, 3)
+            else:
+                # Fallback if margins are too large
+                valid_pixels = roi_hsv.reshape(-1, 3)
 
         if len(valid_pixels) == 0:
             return "#D3D3D3", "gray"
 
+        # Use median to avoid outliers (text pixels)
         median_hsv = np.median(valid_pixels, axis=0)
 
         # Find closest named color

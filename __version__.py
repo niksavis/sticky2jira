@@ -1,4 +1,4 @@
 """Version information for Sticky2Jira application."""
 
-__version__ = "0.9.0-beta"
-__version_info__ = (0, 9, 0, "beta")
+__version__ = "1.0.0"
+__version_info__ = (1, 0, 0)
