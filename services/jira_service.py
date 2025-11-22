@@ -276,7 +276,9 @@ class JiraService:
         try:
             # Method 1: Try the customfield options endpoint
             url = f"{self.server_url}/rest/api/2/customFieldOption/{field_id}"
-            response = self.client._session.get(url)
+            if self.client._session is None:  # type: ignore[attr-defined]
+                return []
+            response = self.client._session.get(url)  # type: ignore[attr-defined]
 
             if response.status_code == 200:
                 data = response.json()
@@ -306,7 +308,9 @@ class JiraService:
 
             # Method 2: Try field-specific API
             url = f"{self.server_url}/rest/api/2/field/{field_id}/option"
-            response = self.client._session.get(url)
+            if self.client._session is None:  # type: ignore[attr-defined]
+                return []
+            response = self.client._session.get(url)  # type: ignore[attr-defined]
 
             if response.status_code == 200:
                 data = response.json()
@@ -666,16 +670,15 @@ class JiraService:
 # ============================================================================
 
 
-def create_jira_service(server_url: str, username: str, api_token: str) -> JiraService:
+def create_jira_service(server_url: str, api_token: str) -> JiraService:
     """
     Factory function to create JiraService instance.
 
     Args:
         server_url: Jira server URL
-        username: Jira username/email
         api_token: Jira API token
 
     Returns:
         JiraService instance
     """
-    return JiraService(server_url, username, api_token)
+    return JiraService(server_url, api_token)

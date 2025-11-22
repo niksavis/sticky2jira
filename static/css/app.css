@@ -412,3 +412,28 @@ body {
   font-size: 0.75rem;
   margin-left: 0.5rem;
 }
+
+/* Footer Styling */
+footer {
+  margin-top: 3rem;
+}
+
+footer a:hover {
+  color: #667eea !important;
+  transition: color 0.2s ease;
+}
+
+/* Body minimum height to push footer down */
+html,
+body {
+  min-height: 100vh;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.container-fluid {
+  flex: 1;
+}

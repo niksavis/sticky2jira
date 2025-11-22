@@ -48,9 +48,14 @@ function initSocketIO() {
     if (data.status === "complete") {
       // Append regions instead of replace (multi-image support)
       // Renumber IDs to be globally unique
+      const currentImageFilename = appState.currentImage; // Store current image filename
       const newRegions = data.regions.map((region) => {
         appState.maxRegionId++;
-        return { ...region, id: appState.maxRegionId };
+        return {
+          ...region,
+          id: appState.maxRegionId,
+          image_filename: currentImageFilename, // Add image filename to region
+        };
       });
       appState.ocrRegions.push(...newRegions);
 
@@ -69,9 +74,15 @@ function initSocketIO() {
 
       // If processing multiple images, continue to next
       if (appState.processNextImage) {
+        console.log(
+          `SocketIO complete: calling processNextImage for next image`
+        );
         appState.processNextImage();
       } else {
         // Single image workflow - auto-advance to OCR Review tab
+        console.log(
+          `SocketIO complete: single image mode, auto-advancing to OCR tab`
+        );
         setTimeout(() => switchTab("ocr-tab"), 1000);
       }
     } else if (data.status === "error") {
@@ -306,12 +317,26 @@ function handleDrop(e) {
       return;
     }
 
-    // Update file input with all valid files
-    const dataTransfer = new DataTransfer();
-    validFiles.forEach((file) => dataTransfer.items.add(file));
-    document.getElementById("imageFile").files = dataTransfer.files;
+    // Append to existing selection
+    if (!appState.selectedImages) {
+      appState.selectedImages = [];
+    }
+    appState.selectedImages.push(...validFiles);
 
-    handleImageSelect({ target: { files: dataTransfer.files } });
+    // Show gallery preview with all selected images
+    displayImageGallery(appState.selectedImages);
+
+    // Enable upload button
+    document.getElementById("uploadImageBtn").disabled = false;
+    document.getElementById("uploadBtnCount").textContent =
+      appState.selectedImages.length;
+    document.getElementById("uploadBtnCount").style.display = "inline";
+
+    showAlert(
+      `Added ${validFiles.length} image(s). Total: ${appState.selectedImages.length}`,
+      "info",
+      3000
+    );
   }
 }
 
@@ -342,13 +367,32 @@ function handlePaste(e) {
         type: blob.type,
       });
 
-      // Update file input
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      document.getElementById("imageFile").files = dataTransfer.files;
+      // Validate file size
+      if (file.size > 5 * 1024 * 1024) {
+        showAlert("Pasted image exceeds 5MB limit", "warning");
+        return;
+      }
 
-      handleImageSelect({ target: { files: [file] } });
-      showAlert("Image pasted from clipboard", "info", 2000);
+      // Append to selection
+      if (!appState.selectedImages) {
+        appState.selectedImages = [];
+      }
+      appState.selectedImages.push(file);
+
+      // Update gallery
+      displayImageGallery(appState.selectedImages);
+
+      // Enable upload button
+      document.getElementById("uploadImageBtn").disabled = false;
+      document.getElementById("uploadBtnCount").textContent =
+        appState.selectedImages.length;
+      document.getElementById("uploadBtnCount").style.display = "inline";
+
+      showAlert(
+        `Image pasted from clipboard. Total: ${appState.selectedImages.length}`,
+        "info",
+        2000
+      );
       break;
     }
   }
@@ -380,16 +424,26 @@ function handleImageSelect(event) {
     return;
   }
 
-  // Update appState with selected files
-  appState.selectedImages = validFiles;
+  // Append new files to existing selection (allow adding more images)
+  if (!appState.selectedImages) {
+    appState.selectedImages = [];
+  }
+  appState.selectedImages.push(...validFiles);
 
-  // Show gallery preview
-  displayImageGallery(validFiles);
+  // Show gallery preview with all selected images
+  displayImageGallery(appState.selectedImages);
 
   // Enable upload button
   document.getElementById("uploadImageBtn").disabled = false;
-  document.getElementById("uploadBtnCount").textContent = validFiles.length;
+  document.getElementById("uploadBtnCount").textContent =
+    appState.selectedImages.length;
   document.getElementById("uploadBtnCount").style.display = "inline";
+
+  showAlert(
+    `Added ${validFiles.length} image(s). Total: ${appState.selectedImages.length}`,
+    "info",
+    3000
+  );
 }
 
 function displayImageGallery(files) {
@@ -483,6 +537,10 @@ function uploadImage() {
       // All uploaded
       hideProgress();
       appState.uploadedImages = uploadedFiles;
+      console.log(
+        `Upload complete. Total files uploaded: ${uploadedFiles.length}`,
+        uploadedFiles
+      );
       document.getElementById("processOcrBtn").style.display = "block";
       document.getElementById("uploadImageBtn").disabled = true;
       showAlert(`${uploadedCount} image(s) uploaded successfully`, "success");
@@ -525,11 +583,15 @@ function uploadImage() {
 
 function startOCRProcessing() {
   const images = appState.uploadedImages || [];
+  console.log(`Starting OCR processing for ${images.length} images:`, images);
   if (images.length === 0) return;
 
   let currentIndex = 0;
 
   const processNext = () => {
+    console.log(
+      `processNext called: currentIndex=${currentIndex}, total=${images.length}`
+    );
     if (currentIndex >= images.length) {
       // All processed - clean up and show "Add More Images" button
       appState.processNextImage = null;
@@ -542,11 +604,15 @@ function startOCRProcessing() {
     }
 
     const filename = images[currentIndex];
-    const percent = Math.round(((currentIndex + 1) / images.length) * 100);
+    const imageNumber = currentIndex + 1;
+    const percent = Math.round((imageNumber / images.length) * 100);
     showProgress(
       percent,
-      `Processing ${currentIndex + 1}/${images.length}: ${filename}...`
+      `Processing ${imageNumber}/${images.length}: ${filename}...`
     );
+
+    // Increment currentIndex now, before async operations
+    currentIndex++;
 
     fetch("/api/ocr/process", {
       method: "POST",
@@ -557,21 +623,25 @@ function startOCRProcessing() {
       .then((data) => {
         if (data.success) {
           // Progress updates will come via SocketIO
-          console.log(`OCR processing started for ${filename}`);
+          console.log(
+            `OCR processing started for ${filename} (index ${imageNumber - 1}/${
+              images.length
+            })`
+          );
           // Store current image for SocketIO handler
           appState.currentImage = filename;
-          currentIndex++;
+          // SocketIO handler will call processNext() when OCR completes
         } else {
           hideProgress();
           showAlert(`OCR failed for ${filename}: ${data.error}`, "danger");
-          currentIndex++;
+          // Skip this image and move to next
           processNext();
         }
       })
       .catch((error) => {
         hideProgress();
         showAlert(`OCR error: ${error.message}`, "danger");
-        currentIndex++;
+        // Skip this image and move to next
         processNext();
       });
   };
@@ -1325,6 +1395,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       populateReviewTable();
+      updateBulkToolbar(); // Reset selection UI
       showAlert(`Deleted ${selectedIndices.length} issue(s)`, "success", 3000);
     }
   });
@@ -1472,7 +1543,7 @@ function populateReviewTable() {
     row.innerHTML = `
       <td data-label="Select"><input type="checkbox" class="row-checkbox" data-index="${index}"></td>
       <td data-label="ID">${index + 1}</td>
-      <td data-label="Preview">
+      <td data-label="Image">
         ${
           region.image_filename
             ? `<img src="/uploads/${region.image_filename}" 
@@ -1484,9 +1555,6 @@ function populateReviewTable() {
             : '<span class="text-muted">-</span>'
         }
       </td>
-      <td data-label="Image"><small class="text-muted">${
-        region.image_filename || "N/A"
-      }</small></td>
       <td data-label="Color"><span class="color-badge" style="background-color: ${
         region.color_hex
       };"></span></td>
