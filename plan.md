@@ -1,9 +1,9 @@
 # sticky2jira - Image-to-Jira Issue Converter
 
 **Created:** November 21, 2025  
-**Last Updated:** November 21, 2025  
+**Last Updated:** November 22, 2025  
 **Project Location:** `C:\Development\sticky2jira\`  
-**Status:** Phase 1 MVP Complete ✅ | Phase 2 In Progress
+**Status:** Phase 1 Complete ✅ | Phase 2 (UI/UX Polish) In Progress
 
 ## Project Overview
 
@@ -54,57 +54,70 @@ A browser-based local application that extracts text from sticky note board imag
 17. ✅ Image preview thumbnails - Show original sticky note per row, click to enlarge in modal
 18. ✅ Drag-and-drop file upload - Drop zone with visual feedback, supports clipboard paste (Ctrl+V)
 
-### 🚧 Known Limitations (To Be Addressed in Phase 2+)
+### ✅ Phase 1.6 Completed Features (OCR Refinement)
+
+**COLOR DETECTION (All Completed):**
+
+1. ✅ 11-color support - Red, orange, yellow, lime, green, cyan, blue, violet, pink, gray, black
+2. ✅ HSV range tuning - Data-driven ranges based on actual sticky note HSV measurements
+3. ✅ Text-first clustering - 45px threshold with fragment merging and duplicate removal
+4. ✅ Edge text detection - PaddleOCR text_det_unclip_ratio=2.5 for edge expansion
+5. ✅ Fuzzy text matching - Levenshtein distance >80% for OCR variations
+6. ✅ Color name display - UI shows English names instead of hex codes
+7. ✅ Pytest test suite - 11 automated tests with visual debugging outputs
+8. ✅ Version management - Single source of truth in `__version__.py` (DRY principle)
+
+### 🚧 Phase 2: UI/UX Polish & Design Consistency (NEXT)
+
+**MESSAGING SYSTEM:**
+
+1. ❌ Toast notification system - Replace alert() with proper toast in header area (right side)
+2. ❌ Non-intrusive messages - Toasts should not push UI elements around
+3. ❌ Consistent positioning - All messages appear in same location (blue header right)
+
+**HEADER & NAVIGATION:**
+
+4. ❌ Sticky header - Header stays visible when scrolling (position: fixed)
+5. ❌ Always-visible OCR button - Show disabled state instead of hiding
+6. ❌ Right-aligned "Next Steps" buttons - Consistent positioning across all tabs
+7. ❌ Always-visible navigation - Show buttons in disabled state with tooltips
+
+**VALIDATION & USER GUIDANCE:**
+
+8. ❌ Tab prerequisite validation - Inform user of missing data when clicking tabs
+9. ❌ Uniform error messages - Same design pattern for all validation messages
+10. ❌ Contextual help - Explain what actions are needed to proceed
+
+**DESIGN UNIFORMITY:**
+
+11. ❌ Input control consistency - Audit text inputs vs dropdowns vs combo boxes
+12. ❌ Button uniformity - Consistent size, color, layout, spacing throughout app
+13. ❌ Component reuse - Extract common patterns (toast, validation, buttons) into shared code
+14. ❌ Color scheme standardization - Consistent use of primary/secondary/success/danger colors
+
+**DESIGN AUDIT FINDINGS:**
+- Mix of `<input>` text boxes with datalist vs `<select>` dropdowns
+- Button sizes vary (btn-sm, btn, btn-lg)
+- Inconsistent button colors (primary, success, danger used arbitrarily)
+- Toast/alert mix (Bootstrap toast vs window.alert)
+- Validation shown via alerts vs inline messages
+- Navigation buttons sometimes left-aligned, sometimes right-aligned
+
+### 🐛 Known Limitations (To Be Addressed in Phase 3+)
 
 - No manual region drawing (OCR detection only)
 - No preprocessing presets (auto-detect only)
 - No Quick Fix Grid for bulk corrections
 - No card view (table view only)
-- ~~No bulk operations (select multiple → edit)~~ ✅ **FIXED in Phase 1.5**
 - No session export/import (JSON)
 - No import history viewer
 - No "Add Images" mode (new session only)
 - No visual indicators (🆕/✏️/✅/⚠️) for issue status
 - No CSV error export
-- No retry failed imports
 
-### 🐛 UI/UX Issues Requiring Fixes
+### ~~🐛 UI/UX Issues Requiring Fixes~~ ✅ ALL FIXED IN PHASE 1.5-1.6
 
-**Navigation & Flow:**
-
-1. **Inconsistent "Proceed" buttons** - Upload and Setup tabs missing navigation buttons
-2. **No auto-advance tabs** - Should switch tabs automatically after OCR/mapping/import complete
-3. **Missing tab progress indicators** - Can't tell which steps are complete (no checkmarks or counts)
-4. **Empty OCR Review tab** - Just shows button, no preview/stats of detected regions
-
-**Session Management:**
-
-5. **"New Import" button broken** - Backend not implemented, doesn't clear database
-6. **Misleading "New Import" label** - Sounds like starting import, actually clears data
-7. **Poor placement** - Always visible in header, too easy to click accidentally
-8. **Multi-image workflow broken** - OCR replaces regions instead of appending (CRITICAL)
-
-**Issue Review Table:**
-
-9. **Missing Project column** - Can't see which project issues belong to
-10. **No save feedback** - Inline edits happen silently, no visual confirmation
-11. **No undo functionality** - Can't undo deletes or bad edits
-12. **No image preview** - Can't verify OCR against original sticky note
-
-**Data Management:**
-
-13. **No bulk operations** - Can't select multiple issues to delete/edit
-14. **Confidence not actionable** - Shows % but can't filter/sort by it
-15. **No keyboard shortcuts** - Everything requires mouse clicks
-
-**Error Handling:**
-
-16. **Technical errors shown to users** - Raw Python errors displayed in UI
-17. **No retry failed imports** - Must re-import all issues if some fail
-
-**Responsive Design:**
-
-18. **Tables not mobile-friendly** - Probably don't work well on smaller screens
+All 18 identified issues have been resolved. See Phase 1.5 and Phase 1.6 completed features above.
 
 ## Core Requirements
 
@@ -453,3 +466,339 @@ socket.on('import_error', {error});
 - ✅ `LICENSE` (internal use license)
 - ✅ `README.md` (concise setup guide with quickstart, troubleshooting, security notes)
 - ✅ `.github/copilot-instructions.md` (AI agent development guidelines, git-ignored)
+- ✅ `__version__.py` (single source of truth for version number - DRY principle)
+- ✅ `tests/test_ocr_detection.py` (pytest suite with 11 automated tests + visual debugging)
+- ✅ `test_images/sticky_notes_sample.png` (reference test image for OCR validation)
+
+---
+
+## Phase 2 Implementation Task List
+
+### Task Group 1: Toast Notification System (DRY Component)
+
+**Objective:** Replace window.alert() with reusable Bootstrap toast component
+
+**Files to modify:**
+- `templates/index.html` - Add toast container in header
+- `static/js/app.js` - Create showToast(message, type) helper function
+- `static/css/app.css` - Style toast container positioning
+
+**Implementation steps:**
+
+1. Create toast container HTML in header (right side of blue header bar)
+   ```html
+   <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 11">
+     <div id="app-toast" class="toast" role="alert">
+       <div class="toast-header">
+         <strong class="me-auto">Sticky2Jira</strong>
+         <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+       </div>
+       <div class="toast-body"></div>
+     </div>
+   </div>
+   ```
+
+2. Create reusable JavaScript function (app.js):
+   ```javascript
+   function showToast(message, type = 'info') {
+     const toast = document.getElementById('app-toast');
+     const body = toast.querySelector('.toast-body');
+     const header = toast.querySelector('.toast-header');
+     
+     // Set message and color
+     body.textContent = message;
+     header.className = `toast-header bg-${type} text-white`;
+     
+     // Show toast
+     const bsToast = new bootstrap.Toast(toast, { autohide: true, delay: 5000 });
+     bsToast.show();
+   }
+   ```
+
+3. Replace all `alert()` calls with `showToast()`:
+   - Success messages: `showToast(msg, 'success')`
+   - Error messages: `showToast(msg, 'danger')`
+   - Info messages: `showToast(msg, 'info')`
+   - Warning messages: `showToast(msg, 'warning')`
+
+**DRY Benefits:**
+- Single function for all notifications
+- Consistent appearance and behavior
+- No UI layout disruption
+
+---
+
+### Task Group 2: Sticky Header (CSS)
+
+**Objective:** Header remains visible when scrolling
+
+**Files to modify:**
+- `static/css/app.css` - Add sticky header styles
+- `templates/index.html` - Adjust body padding-top
+
+**Implementation steps:**
+
+1. Add CSS for sticky header:
+   ```css
+   header.navbar {
+     position: sticky;
+     top: 0;
+     z-index: 1030;
+   }
+   
+   body {
+     padding-top: 0; /* Remove if currently set */
+   }
+   ```
+
+2. Ensure header has proper background opacity (prevent content showing through)
+
+**KISS Benefits:**
+- Pure CSS solution, no JavaScript needed
+- Works with existing Bootstrap navbar
+
+---
+
+### Task Group 3: Always-Visible Controls with Disabled States
+
+**Objective:** Show all buttons/controls, use disabled state instead of hiding
+
+**Files to modify:**
+- `static/js/app.js` - Update button visibility logic
+- `templates/index.html` - Remove `d-none` toggle classes
+
+**Implementation steps:**
+
+1. OCR Processing button:
+   - Always visible, disabled when no image uploaded
+   - Add tooltip: "Upload an image first"
+
+2. "Next Steps" buttons:
+   - Always visible on all tabs
+   - Right-aligned using `text-end` or `d-flex justify-content-end`
+   - Disabled with tooltips when prerequisites not met
+
+3. Create helper function for button state management:
+   ```javascript
+   function setButtonState(buttonId, enabled, tooltipText = '') {
+     const btn = document.getElementById(buttonId);
+     btn.disabled = !enabled;
+     if (tooltipText) {
+       btn.setAttribute('data-bs-toggle', 'tooltip');
+       btn.setAttribute('title', tooltipText);
+       new bootstrap.Tooltip(btn);
+     }
+   }
+   ```
+
+**DRY Benefits:**
+- Single function manages all button states
+- Consistent disabled state styling
+- Reusable tooltip pattern
+
+---
+
+### Task Group 4: Tab Prerequisite Validation
+
+**Objective:** Uniform validation messages when clicking tabs without prerequisites
+
+**Files to modify:**
+- `static/js/app.js` - Add tab click validation
+- Create validation message component (reuse toast system)
+
+**Implementation steps:**
+
+1. Define prerequisites for each tab:
+   ```javascript
+   const TAB_PREREQUISITES = {
+     'upload-tab': null, // No prerequisites
+     'setup-tab': null,
+     'ocr-tab': () => uploadedImages.length > 0 ? null : 'Please upload at least one image first',
+     'mapping-tab': () => detectedRegions.length > 0 ? null : 'Please process an image with OCR first',
+     'issues-tab': () => colorMappings.length > 0 ? null : 'Please configure color mappings first',
+     'results-tab': () => importResults ? null : 'Please import issues to Jira first'
+   };
+   ```
+
+2. Add validation on tab click:
+   ```javascript
+   document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
+     tab.addEventListener('click', (e) => {
+       const targetTab = tab.dataset.bsTarget.replace('#', '') + '-tab';
+       const prerequisite = TAB_PREREQUISITES[targetTab];
+       
+       if (prerequisite) {
+         const error = prerequisite();
+         if (error) {
+           e.preventDefault();
+           showToast(error, 'warning');
+         }
+       }
+     });
+   });
+   ```
+
+**DRY Benefits:**
+- Centralized prerequisite logic
+- Reuses toast notification system
+- Easy to maintain and extend
+
+---
+
+### Task Group 5: Input Control Audit & Standardization
+
+**Objective:** Consistent use of text inputs vs dropdowns vs combo boxes
+
+**Files to modify:**
+- `templates/index.html` - Replace inconsistent controls
+- `static/js/app.js` - Update event handlers
+
+**Design Rules:**
+- **Text input + datalist** (combo box): User knows values, typing is faster
+  - Example: Project key, issue type (user familiar with Jira)
+- **Select dropdown**: Finite options, user needs to see choices
+  - Example: Confidence level filter (High/Medium/Low)
+- **Text input only**: Free-form text
+  - Example: Summary, description fields
+
+**Implementation steps:**
+
+1. Audit all form controls in HTML
+2. Replace where inconsistent:
+   - Jira project field: Keep as text + datalist
+   - Issue type field: Keep as text + datalist  
+   - Confidence filter: Convert to `<select>` dropdown
+   - Color mapping: Keep as `<select>` (finite color options)
+
+**KISS Benefits:**
+- Fewer control types = simpler codebase
+- Predictable user experience
+
+---
+
+### Task Group 6: Button Uniformity Audit
+
+**Objective:** Consistent button styling throughout application
+
+**Files to modify:**
+- `templates/index.html` - Update all button classes
+- `static/css/app.css` - Define custom button classes if needed
+
+**Button Design Standards:**
+
+1. **Size hierarchy:**
+   - Primary actions: `btn btn-primary` (default size)
+   - Secondary actions: `btn btn-secondary` (default size)
+   - Destructive actions: `btn btn-danger` (default size)
+   - Small inline actions: `btn btn-sm btn-outline-primary`
+
+2. **Color meanings:**
+   - Primary (blue): Main workflow actions (Upload, Process OCR, Import)
+   - Success (green): Completion/confirmation actions (Save, Confirm)
+   - Danger (red): Destructive actions (Delete, Clear All)
+   - Secondary (gray): Navigation, Cancel
+   - Warning (yellow): Retry, caution actions
+
+3. **Layout consistency:**
+   - Action buttons: Left-aligned in cards
+   - Navigation buttons: Right-aligned (`text-end`)
+   - Inline actions: Within table cells or inline with content
+
+**Implementation steps:**
+
+1. Create audit spreadsheet of all buttons:
+   - Button text
+   - Current classes
+   - Purpose/action
+   - Recommended classes
+
+2. Update all buttons to follow standards
+
+3. Document in copilot-instructions.md
+
+**DRY Benefits:**
+- Predictable styling patterns
+- Easy to maintain
+- Clear visual hierarchy
+
+---
+
+### Task Group 7: Component Extraction (DRY Refactor)
+
+**Objective:** Extract reusable patterns into shared functions
+
+**Files to modify:**
+- `static/js/app.js` - Create utility functions section
+
+**Reusable components to create:**
+
+1. **Toast notifications** (already covered in Task 1)
+
+2. **Button state management:**
+   ```javascript
+   function setButtonState(selector, enabled, tooltip = '') { ... }
+   ```
+
+3. **Tab badge updates:**
+   ```javascript
+   function updateTabBadge(tabId, content, variant = 'secondary') {
+     const badge = document.querySelector(`#${tabId}-tab .badge`);
+     badge.textContent = content;
+     badge.className = `badge bg-${variant} ms-2`;
+   }
+   ```
+
+4. **DataTable refresh:**
+   ```javascript
+   function refreshIssuesTable() {
+     if (issuesTable) {
+       issuesTable.clear();
+       issuesTable.rows.add(globalIssues);
+       issuesTable.draw();
+     }
+   }
+   ```
+
+5. **Validation helpers:**
+   ```javascript
+   function validatePrerequisites(tabId) { ... }
+   function showValidationError(message) { showToast(message, 'warning'); }
+   ```
+
+**DRY Benefits:**
+- Single source of truth for common operations
+- Easier testing and debugging
+- Reduces code duplication from 500+ lines
+
+---
+
+## Implementation Order (Priority)
+
+**Week 1 - Core Infrastructure:**
+1. Task Group 1: Toast notification system (enables all other messaging)
+2. Task Group 2: Sticky header (foundation for toast positioning)
+3. Task Group 7: Component extraction (DRY refactor before adding features)
+
+**Week 2 - User Experience:**
+4. Task Group 3: Always-visible controls with disabled states
+5. Task Group 4: Tab prerequisite validation (reuses toast system)
+
+**Week 3 - Design Polish:**
+6. Task Group 5: Input control standardization
+7. Task Group 6: Button uniformity audit
+
+---
+
+## Success Criteria
+
+**Completed when:**
+- ✅ Zero `alert()` or `confirm()` calls in JavaScript
+- ✅ Header stays visible when scrolling any tab
+- ✅ All buttons visible (disabled state used instead of hiding)
+- ✅ Navigation buttons right-aligned on all tabs
+- ✅ Clicking tabs without prerequisites shows helpful toast message
+- ✅ All text inputs vs dropdowns follow documented design rules
+- ✅ All buttons follow size/color/layout standards
+- ✅ Code has <5 duplicated patterns (DRY verification)
+- ✅ copilot-instructions.md updated with UI component patterns
+

@@ -350,6 +350,26 @@ def truncate_issues() -> None:
     logger.info("Truncated issues table for new session")
 
 
+def clear_session_data() -> None:
+    """
+    Clear all session data except Jira configuration and field defaults.
+
+    This includes:
+    - Issues (OCR regions and imported issues)
+    - Color mappings
+    - Import history
+
+    Preserves:
+    - Jira settings (credentials, server URL)
+    - Field defaults configurations
+    """
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM issues")
+        conn.execute("DELETE FROM color_mappings")
+        conn.execute("DELETE FROM import_history")
+    logger.info("Cleared session data (issues, color mappings, import history)")
+
+
 # ============================================================================
 # Color Mappings CRUD Operations
 # ============================================================================

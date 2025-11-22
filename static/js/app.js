@@ -65,8 +65,7 @@ function initSocketIO() {
         `OCR processing complete! Found ${newRegions.length} regions (${appState.ocrRegions.length} total)`,
         "success"
       );
-      document.getElementById("proceedToMappingBtn").style.display = "block";
-      document.getElementById("uploadNextBtn").style.display = "block";
+      setButtonState("#proceedToMappingBtn", true);
 
       // Update badges
       updateTabBadge("upload", "complete");
@@ -116,6 +115,9 @@ function initSocketIO() {
       renderImportResults(data);
       showAlert("Import complete!", "success");
       switchTab("results-tab");
+
+      // Enable Proceed to Results button
+      setButtonState("#proceedToResultsBtn", true);
 
       // Update Results badge with created + updated count
       const totalImported = (data.created || 0) + (data.updated || 0);
@@ -498,28 +500,7 @@ function clearImageGallery() {
 
   // Reset buttons
   document.getElementById("uploadImageBtn").disabled = true;
-  document.getElementById("processOcrBtn").style.display = "none";
-  document.getElementById("addMoreImagesBtn").style.display = "none";
-}
-
-function addMoreImages() {
-  // Re-enable file selection without clearing existing OCR regions
-  document.getElementById("addMoreImagesBtn").style.display = "none";
-
-  // Clear uploaded images to allow new selection
-  appState.selectedImages = [];
-  appState.uploadedImages = [];
-
-  // Clear gallery
-  document.getElementById("previewGallery").innerHTML = "";
-  document.getElementById("imagePreviewGallery").style.display = "none";
-
-  // Reset file input and enable
-  document.getElementById("imageFile").value = "";
-  document.getElementById("uploadImageBtn").disabled = true;
-
-  // Show upload next button to return to upload workflow
-  document.getElementById("uploadNextBtn").style.display = "block";
+  setButtonState("#processOcrBtn", false, "Upload an image first");
 }
 
 function uploadImage() {
@@ -541,7 +522,7 @@ function uploadImage() {
         `Upload complete. Total files uploaded: ${uploadedFiles.length}`,
         uploadedFiles
       );
-      document.getElementById("processOcrBtn").style.display = "block";
+      setButtonState("#processOcrBtn", true);
       document.getElementById("uploadImageBtn").disabled = true;
       showAlert(`${uploadedCount} image(s) uploaded successfully`, "success");
       return;
@@ -593,10 +574,9 @@ function startOCRProcessing() {
       `processNext called: currentIndex=${currentIndex}, total=${images.length}`
     );
     if (currentIndex >= images.length) {
-      // All processed - clean up and show "Add More Images" button
+      // All processed
       appState.processNextImage = null;
-      document.getElementById("addMoreImagesBtn").style.display = "block";
-      document.getElementById("processOcrBtn").style.display = "none";
+      setButtonState("#processOcrBtn", false, "All images processed");
 
       // Auto-advance to OCR Review tab
       setTimeout(() => switchTab("ocr-tab"), 1000);
@@ -903,7 +883,7 @@ function renderColorMappings() {
     colorHtml += `
       <div class="color-mapping-row mb-2">
         <span class="color-badge" style="background-color: ${hex};"></span>
-        <label class="me-2">${name}</label>
+        <label class="color-name-label">${name}</label>
         <select class="form-select color-mapping-select" data-color="${hex}" style="max-width: 300px;">
           <option value="">Select issue type...</option>
           ${appState.issueTypes[projectKey]
@@ -1010,21 +990,199 @@ function renderIndividualMappings() {
 // UI Helpers
 // ============================================================================
 
-function showAlert(message, type, duration = null) {
-  const container = document.getElementById("alertContainer");
-  const alert = document.createElement("div");
-  alert.className = `alert alert-${type} alert-dismissible fade show`;
-  alert.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    `;
-  container.appendChild(alert);
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
-  if (duration) {
-    setTimeout(() => {
-      alert.remove();
-    }, duration);
+/**
+ * Show toast notification (replaces old alert system that pushed UI around)
+ * @param {string} message - Message to display
+ * @param {string} type - Bootstrap color variant: success, danger, warning, info
+ * @param {number} duration - Auto-hide delay in ms (default: 5000)
+ */
+function showToast(message, type = "info", duration = 5000) {
+  const toastEl = document.getElementById("appToast");
+  const toastBody = document.getElementById("toastBody");
+  const toastHeader = toastEl.querySelector(".toast-header");
+
+  // Set message and color
+  toastBody.textContent = message;
+  toastHeader.className = `toast-header bg-${type}`;
+
+  // Show toast
+  const toast = new bootstrap.Toast(toastEl, {
+    autohide: true,
+    delay: duration,
+  });
+  toast.show();
+}
+
+/**
+ * Legacy function - redirects to showToast for backward compatibility
+ * @deprecated Use showToast() instead
+ */
+function showAlert(message, type, duration = null) {
+  showToast(message, type, duration || 5000);
+}
+
+/**
+ * Set button enabled/disabled state with optional tooltip
+ * @param {string} selector - CSS selector or element ID
+ * @param {boolean} enabled - Whether button should be enabled
+ * @param {string} tooltipText - Tooltip text when disabled (optional)
+ */
+function setButtonState(selector, enabled, tooltipText = "") {
+  const btn =
+    typeof selector === "string"
+      ? document.querySelector(
+          selector.startsWith("#") || selector.startsWith(".")
+            ? selector
+            : `#${selector}`
+        )
+      : selector;
+
+  if (!btn) return;
+
+  btn.disabled = !enabled;
+
+  if (!enabled && tooltipText) {
+    btn.setAttribute("data-bs-toggle", "tooltip");
+    btn.setAttribute("data-bs-placement", "top");
+    btn.setAttribute("title", tooltipText);
+    // Initialize tooltip
+    new bootstrap.Tooltip(btn);
+  } else if (enabled) {
+    // Remove tooltip when enabled
+    btn.removeAttribute("data-bs-toggle");
+    btn.removeAttribute("title");
+    const tooltip = bootstrap.Tooltip.getInstance(btn);
+    if (tooltip) tooltip.dispose();
   }
+}
+
+/**
+ * Update tab badge content and variant
+ * @param {string} tabId - Tab ID (e.g., 'setup', 'upload')
+ * @param {string|number} content - Badge text/number
+ * @param {string} variant - Bootstrap color variant (default: 'secondary')
+ */
+function updateTabBadge(tabId, content, variant = "secondary") {
+  const badge = document.querySelector(`#${tabId}-tab .badge, #${tabId}-badge`);
+  if (badge) {
+    badge.textContent = content;
+    badge.className = `badge bg-${variant} ms-2`;
+  }
+}
+
+/**
+ * Refresh DataTable with new data
+ * Reusable function to avoid repetitive table refresh code
+ */
+function refreshIssuesTable() {
+  if (issuesTable) {
+    issuesTable.clear();
+    issuesTable.rows.add(globalIssues);
+    issuesTable.draw();
+  }
+}
+
+/**
+ * Show confirmation modal dialog
+ * @param {string} message - Message to display
+ * @param {string} title - Modal title (default: "Confirm Action")
+ * @param {string} confirmBtnText - Confirm button text (default: "Confirm")
+ * @param {string} confirmBtnVariant - Bootstrap color variant for confirm button (default: "danger")
+ * @returns {Promise<boolean>} - Resolves to true if confirmed, false if canceled
+ */
+function showConfirm(
+  message,
+  title = "Confirm Action",
+  confirmBtnText = "Confirm",
+  confirmBtnVariant = "danger"
+) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("confirmModal");
+    const modalInstance = new bootstrap.Modal(modal);
+    const titleEl = document.getElementById("confirmModalLabel");
+    const bodyEl = document.getElementById("confirmModalBody");
+    const confirmBtn = document.getElementById("confirmModalConfirmBtn");
+
+    // Set content
+    titleEl.textContent = title;
+    bodyEl.innerHTML = message.replace(/\n/g, "<br>");
+    confirmBtn.textContent = confirmBtnText;
+    confirmBtn.className = `btn btn-${confirmBtnVariant}`;
+
+    // Handle confirm
+    const handleConfirm = () => {
+      modalInstance.hide();
+      cleanup();
+      resolve(true);
+    };
+
+    // Handle cancel/dismiss
+    const handleCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    // Cleanup listeners
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", handleConfirm);
+      modal.removeEventListener("hidden.bs.modal", handleCancel);
+    };
+
+    // Attach listeners
+    confirmBtn.addEventListener("click", handleConfirm);
+    modal.addEventListener("hidden.bs.modal", handleCancel, { once: true });
+
+    // Show modal
+    modalInstance.show();
+  });
+}
+
+/**
+ * Validate prerequisites for a tab
+ * @param {string} tabId - Tab ID to validate
+ * @returns {string|null} - Error message if invalid, null if valid
+ */
+function validateTabPrerequisites(tabId) {
+  const prerequisites = {
+    upload: null, // No prerequisites
+    setup: null,
+    ocr: () =>
+      appState.uploadedImages.length > 0
+        ? null
+        : "Please upload at least one image first",
+    mapping: () =>
+      appState.ocrRegions.length > 0
+        ? null
+        : "Please process an image with OCR first",
+    issues: () => {
+      // Check if OCR regions exist and have issue types assigned
+      if (appState.ocrRegions.length === 0) {
+        return "Please process an image with OCR first";
+      }
+      // Check if all regions have issue types assigned (color mappings applied)
+      const unmappedCount = appState.ocrRegions.filter(
+        (r) => !r.issue_type
+      ).length;
+      if (unmappedCount > 0) {
+        return "Please configure color mappings first";
+      }
+      return null;
+    },
+    results: () => {
+      // Check if import results container has content
+      const resultsContainer = document.getElementById("importResults");
+      return resultsContainer && resultsContainer.innerHTML.trim() !== ""
+        ? null
+        : "Please import issues to Jira first";
+    },
+  };
+
+  const prerequisiteCheck = prerequisites[tabId];
+  return prerequisiteCheck ? prerequisiteCheck() : null;
 }
 
 function showProgress(percent, message) {
@@ -1182,6 +1340,24 @@ document.addEventListener("DOMContentLoaded", () => {
   // Load saved Jira settings
   loadJiraSettings();
 
+  // Add tab prerequisite validation
+  document.querySelectorAll('[data-bs-toggle="tab"]').forEach((tabTrigger) => {
+    tabTrigger.addEventListener("click", (e) => {
+      const targetId =
+        tabTrigger.getAttribute("data-bs-target")?.replace("#", "") ||
+        tabTrigger.getAttribute("id")?.replace("-tab", "");
+
+      if (targetId) {
+        const error = validateTabPrerequisites(targetId);
+        if (error) {
+          e.preventDefault();
+          e.stopPropagation();
+          showToast(error, "warning");
+        }
+      }
+    });
+  });
+
   // Setup tab
   document
     .getElementById("testConnectionBtn")
@@ -1203,9 +1379,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("clearImagesBtn")
     .addEventListener("click", clearImageGallery);
-  document
-    .getElementById("addMoreImagesBtn")
-    .addEventListener("click", addMoreImages);
 
   // Drag and drop functionality
   const dropZone = document.getElementById("dropZone");
@@ -1273,6 +1446,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("mappingForm").addEventListener("submit", (e) => {
     e.preventDefault();
     showAlert("Mappings saved successfully!", "success", 3000);
+    setButtonState("#proceedToIssuesBtn", true);
   });
 
   // Proceed to Issue Review button
@@ -1280,6 +1454,13 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("proceedToIssuesBtn")
     .addEventListener("click", () => {
       applyColorMappingsAndProceed();
+    });
+
+  // Proceed to Results button
+  document
+    .getElementById("proceedToResultsBtn")
+    .addEventListener("click", () => {
+      switchTab("results-tab");
     });
 
   // Start Import button
@@ -1390,46 +1571,66 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (selectedIndices.length === 0) return;
 
-    if (confirm(`Delete ${selectedIndices.length} selected issue(s)?`)) {
-      selectedIndices.forEach((index) => {
-        appState.ocrRegions.splice(index, 1);
-      });
+    showConfirm(
+      `Delete ${selectedIndices.length} selected issue(s)?`,
+      "Delete Issues",
+      "Delete",
+      "danger"
+    ).then((confirmed) => {
+      if (confirmed) {
+        selectedIndices.forEach((index) => {
+          appState.ocrRegions.splice(index, 1);
+        });
 
-      populateReviewTable();
-      updateBulkToolbar(); // Reset selection UI
-      showAlert(`Deleted ${selectedIndices.length} issue(s)`, "success", 3000);
-    }
+        populateReviewTable();
+        updateBulkToolbar(); // Reset selection UI
+        showAlert(
+          `Deleted ${selectedIndices.length} issue(s)`,
+          "success",
+          3000
+        );
+      }
+    });
   });
 
   // New session button
   document.getElementById("newSessionBtn").addEventListener("click", () => {
-    if (
-      confirm(
-        "⚠️ WARNING: This will permanently delete all OCR regions, color mappings, and imported issues.\n\nAre you absolutely sure you want to clear everything and start over?"
-      )
-    ) {
-      fetch("/api/session/new", { method: "POST" })
-        .then((response) => response.json())
-        .then((data) => {
-          if (data.success) {
-            // Clear frontend state
-            appState.ocrRegions = [];
-            appState.colorMappings = {};
-            appState.issues = [];
-            appState.currentImage = null;
-            appState.maxRegionId = 0;
+    showConfirm(
+      "<strong>⚠️ WARNING:</strong> This will permanently delete:<br>" +
+        "• All OCR regions and imported issues<br>" +
+        "• Color mappings<br>" +
+        "• Import history<br>" +
+        "• Uploaded images<br><br>" +
+        "Your Jira configuration and field defaults will be preserved.<br><br>" +
+        "Are you sure you want to start a new session?",
+      "Clear Session",
+      "Yes, Clear Everything",
+      "danger"
+    ).then((confirmed) => {
+      if (confirmed) {
+        fetch("/api/session/new", { method: "POST" })
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.success) {
+              // Clear frontend state
+              appState.ocrRegions = [];
+              appState.colorMappings = {};
+              appState.issues = [];
+              appState.currentImage = null;
+              appState.maxRegionId = 0;
 
-            // Reload to reset UI
-            location.reload();
-          } else {
-            showAlert(`Failed to start new session: ${data.error}`, "danger");
-          }
-        })
-        .catch((error) => {
-          console.error("New session error:", error);
-          showAlert("Failed to start new session", "danger");
-        });
-    }
+              // Reload to reset UI
+              location.reload();
+            } else {
+              showAlert(`Failed to start new session: ${data.error}`, "danger");
+            }
+          })
+          .catch((error) => {
+            console.error("New session error:", error);
+            showAlert("Failed to start new session", "danger");
+          });
+      }
+    });
   });
 
   // Global keyboard shortcuts
@@ -1780,10 +1981,14 @@ function loadIssuesFromDatabase() {
 }
 
 function deleteIssue(index) {
-  if (confirm("Delete this issue?")) {
-    appState.ocrRegions.splice(index, 1);
-    populateReviewTable();
-  }
+  showConfirm("Delete this issue?", "Delete Issue", "Delete", "danger").then(
+    (confirmed) => {
+      if (confirmed) {
+        appState.ocrRegions.splice(index, 1);
+        populateReviewTable();
+      }
+    }
+  );
 }
 
 function showImagePreview(filename) {

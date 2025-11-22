@@ -675,29 +675,51 @@ def get_issues_preview():
         # Get all issues from database
         issues = session_manager.get_all_issues()
 
+        # Helper to convert bytes to string
+        def safe_str(val):
+            """Convert bytes to string if needed."""
+            if isinstance(val, bytes):
+                return val.decode("utf-8", errors="replace")
+            return val
+
         # Transform to frontend format
-        issues_data = [
-            {
-                "db_id": issue["id"],
-                "id": issue["region_id"],
-                "color_hex": issue["color_hex"],
-                "color_name": "unknown",  # TODO: derive from color_hex
-                "text": issue["summary"],
-                "linked_text": issue["description"],
-                "issue_type": issue["issue_type"],
-                "project_key": issue["project_key"],
-                "issue_key": issue["issue_key"],
-                "confidence": issue["confidence"],
-                "image_filename": issue.get("image_filename", ""),
-                "bbox": {
-                    "x": issue["bbox_x"],
-                    "y": issue["bbox_y"],
-                    "width": issue["bbox_width"],
-                    "height": issue["bbox_height"],
-                },
-            }
-            for issue in issues
-        ]
+        issues_data = []
+        for idx, raw_issue in enumerate(issues):
+            try:
+                # Convert all string fields from bytes if needed
+                issue = {
+                    k: safe_str(v) if isinstance(v, (str, bytes, type(None))) else v
+                    for k, v in raw_issue.items()
+                }
+
+                issue_obj = {
+                    "db_id": issue["id"],
+                    "id": issue["region_id"],
+                    "color_hex": issue["color_hex"],
+                    "color_name": "unknown",  # TODO: derive from color_hex
+                    "text": issue["summary"],
+                    "linked_text": issue.get("description") or "",
+                    "issue_type": issue.get("issue_type") or "",
+                    "project_key": issue.get("project_key") or "",
+                    "issue_key": issue.get("issue_key") or "",
+                    "confidence": issue.get("confidence") or 0,
+                    "image_filename": issue.get("image_filename", ""),
+                    "bbox": {
+                        "x": issue.get("bbox_x") or 0,
+                        "y": issue.get("bbox_y") or 0,
+                        "width": issue.get("bbox_width") or 0,
+                        "height": issue.get("bbox_height") or 0,
+                    },
+                }
+                issues_data.append(issue_obj)
+            except Exception as e:
+                app.logger.error(
+                    f"Error transforming issue #{idx} (id={raw_issue.get('id')}): {str(e)}"
+                )
+                # Log the problematic issue
+                for key, val in raw_issue.items():
+                    app.logger.error(f"  {key}: {type(val).__name__}")
+                raise
 
         return jsonify({"success": True, "issues": issues_data})
     except Exception as e:
@@ -804,16 +826,30 @@ def import_issues():
 
 @app.route("/api/session/new", methods=["POST"])
 def new_session():
-    """Start a new import session (clears existing issues)."""
+    """Start a new import session (clears all data except Jira config)."""
     try:
-        app.logger.info("Starting new session - truncating issues table")
+        app.logger.info("Starting new session - clearing session data")
 
-        # Clear all issues from database
-        session_manager.truncate_issues()
+        # Clear issues, color mappings, and import history (preserve Jira settings)
+        session_manager.clear_session_data()
 
-        app.logger.info("New session started - all issues cleared")
+        # Clean up uploaded images
+        upload_folder = app.config["UPLOAD_FOLDER"]
+        if os.path.exists(upload_folder):
+            for filename in os.listdir(upload_folder):
+                file_path = os.path.join(upload_folder, filename)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    app.logger.warning(f"Failed to delete {file_path}: {str(e)}")
+
+        app.logger.info("New session started - cleared all data except Jira config")
         return jsonify(
-            {"success": True, "message": "New session started - all issues cleared"}
+            {
+                "success": True,
+                "message": "New session started - cleared all data except Jira configuration",
+            }
         )
     except Exception as e:
         app.logger.error(f"Session reset failed: {str(e)}", exc_info=True)

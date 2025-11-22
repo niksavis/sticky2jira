@@ -19,10 +19,69 @@ body {
   font-size: 1.5rem;
 }
 
+/* Sticky Header */
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+}
+
+/* Toast Notifications */
+.toast-container {
+  margin-top: 70px; /* Below sticky header */
+}
+
+.toast {
+  min-width: 300px;
+  max-width: 500px;
+  opacity: 0;
+  transition: opacity 0.15s linear;
+}
+
+.toast.showing,
+.toast.show {
+  opacity: 1;
+}
+
+.toast-header.bg-success {
+  background-color: #198754 !important;
+  color: white !important;
+}
+
+.toast-header.bg-danger {
+  background-color: #dc3545 !important;
+  color: white !important;
+}
+
+.toast-header.bg-warning {
+  background-color: #ffc107 !important;
+  color: #000 !important;
+}
+
+.toast-header.bg-info {
+  background-color: #0dcaf0 !important;
+  color: #000 !important;
+}
+
+/* Ensure toast header has default styling */
+.toast-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.toast-header .btn-close {
+  filter: invert(1);
+}
+
+.toast-header.bg-warning .btn-close,
+.toast-header.bg-info .btn-close {
+  filter: none;
+}
+
 /* Progress Bar */
 #progressContainer {
   position: sticky;
-  top: 0;
+  top: 70px; /* Below sticky header */
   z-index: 1000;
   background-color: white;
   padding: 1rem;
@@ -30,7 +89,7 @@ body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-/* Alert Styling */
+/* Static Bootstrap Alerts (for OCR Summary, Import Results, etc.) */
 .alert {
   border-radius: 0.5rem;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -127,6 +186,12 @@ body {
 
 .color-mapping-row .color-badge {
   flex-shrink: 0;
+}
+
+.color-mapping-row .color-name-label {
+  flex-shrink: 0;
+  width: 80px;
+  font-weight: 500;
 }
 
 .color-mapping-row select {
