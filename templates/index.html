@@ -153,13 +153,15 @@
                     </div>
                     <div class="card-footer bg-light">
                         <div class="d-flex gap-2 justify-content-between align-items-center">
-                            <div class="d-flex gap-2">
+                            <div class="d-flex gap-2 justify-content-between align-items-center">
                                 <button type="button" class="btn btn-primary" id="uploadImageBtn" disabled>
-                                    <span id="uploadBtnText">Upload Images</span>
+                                    <i class="bi bi-cloud-upload"></i>
+                                    <span class="d-none d-md-inline ms-1" id="uploadBtnText">Upload Images</span>
                                     <span id="uploadBtnCount" class="badge bg-light text-dark ms-1" style="display: none;">0</span>
                                 </button>
                                 <button type="button" class="btn btn-success" id="processOcrBtn" disabled>
-                                    <i class="bi bi-play-circle"></i> Start OCR Processing
+                                    <i class="bi bi-play-circle"></i>
+                                    <span class="d-none d-md-inline ms-1">Start OCR Processing</span>
                                 </button>
                             </div>
                             <button type="button" class="btn btn-outline-primary" id="uploadNextBtn">
@@ -190,7 +192,7 @@
                                     <strong>Colors Found:</strong> <span id="colorCount">0</span>
                                 </div>
                                 <div class="col-md-3">
-                                    <strong>Low Confidence (<70%):</strong> <span id="lowConfCount">0</span>
+                                    <strong>Low Confidence (&lt;70%):</strong> <span id="lowConfCount">0</span>
                                 </div>
                             </div>
                             <div class="mt-2">
@@ -275,7 +277,7 @@
                                         <option value="all">All</option>
                                         <option value="high">High ≥80%</option>
                                         <option value="medium">Med 60-79%</option>
-                                        <option value="low">Low <60%</option>
+                                        <option value="low">Low &lt;60%</option>
                                     </select>
                                 </div>
                                 
@@ -484,7 +486,7 @@
     </div>
 
     <!-- Image Preview Modal -->
-    <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-labelledby="imagePreviewModalLabel" aria-hidden="true">
+    <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-labelledby="imagePreviewModalLabel">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
@@ -505,7 +507,7 @@
     <script src="/static/libs/jquery-3.7.0/jquery.min.js"></script>
     
     <!-- Confirmation Modal (Reusable) -->
-    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header" id="confirmModalHeader">

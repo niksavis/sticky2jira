@@ -1,8 +1,8 @@
-# Sticky2Jira
+# <img src="static/favicon.ico" width="32" height="32" alt="Sticky2Jira" style="vertical-align: text-bottom;"> Sticky2Jira
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/niksavis/sticky2jira)
+[![Version](https://img.shields.io/badge/version-1.1.0-green.svg)](https://github.com/niksavis/sticky2jira)
 
 Browser-based local application that extracts text from sticky note images using OCR and creates/updates Jira issues. **100% local processing - no cloud APIs.**
 
@@ -12,7 +12,9 @@ Browser-based local application that extracts text from sticky note images using
 - **11-Color Detection** - Automatically detects red, orange, yellow, lime, green, cyan, blue, violet, pink, gray, and black sticky notes
 - **Spatial Linking** - Links description stickies to nearby summary stickies
 - **Jira Integration** - Creates new issues or updates existing ones (prevents duplicates)
-- **Interactive UI** - Step-by-step wizard interface with real-time progress
+- **Manual Issue Creation** - Add issues during review without OCR using the "Add Issue" button in the Issue Review tab
+- **Mobile Responsive** - Optimized card-based layout for mobile devices with touch-friendly controls
+- **Interactive UI** - Step-by-step wizard interface with real-time progress and autocomplete inputs
 - **Secure** - API tokens encrypted with AES-128, stored locally in SQLite
 - **Offline Capable** - All frontend assets self-hosted, works without internet after setup
 
@@ -20,7 +22,8 @@ Browser-based local application that extracts text from sticky note images using
 
 - **Python 3.8+** - Required for Flask backend
 - **Windows OS** - Batch scripts designed for Windows
-- **Internet connection** - Only needed for initial setup (downloading Python packages)
+- **Internet connection** - Only needed for initial setup (downloading Python packages) and Jira import
+- **Jira Access** - Valid Jira URL and API token required for importing issues (OCR works offline)
 
 ## Installation
 
@@ -52,11 +55,16 @@ Browser-based local application that extracts text from sticky note images using
 1. **Upload**: Drop sticky note image → OCR runs automatically
 2. **OCR Review**: View detected regions with confidence scores → Proceed to Mapping
 3. **Mapping**: Assign sticky colors to issue types (Story/Bug/Task) → Proceed to Issue Review
-4. **Import**: Review/edit issues → Click "Import" button
-5. **Results**: View import summary with clickable Jira issue links
+4. **Issue Review**: Review/edit OCR-detected issues → Use "Add Issue" button to create additional manual issues
+5. **Import**: Click "Import" button to send all issues to Jira
+6. **Results**: View import summary with clickable Jira issue links
 
 **Setup:** Click ⚙️ icon in header → Enter Jira URL and API token → Test → Save  
-**Tips:** Issues with `issue_key` are updated (no duplicates). Click "New Session" to clear all data.
+**Tips:** 
+- Use "Add Issue" button in Issue Review tab to create issues without OCR (marked with light blue background)
+- Issues with `issue_key` are updated (no duplicates)
+- Mobile users see optimized card layout with visual editing indicators (yellow background = editable fields)
+- Click "New Session" to clear all data and start fresh
 
 ## Advanced Configuration
 
@@ -142,5 +150,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Version:** 1.0.0 | **Status:** Production Ready ✅  
+**Version:** 1.1.0 | **Status:** Production Ready ✅  
 **Last Updated:** November 22, 2025 | **License:** MIT

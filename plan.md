@@ -168,7 +168,28 @@ The application is fully functional with:
 
 15. ✅ Reusable modal - showConfirm(message, title, confirmBtnText, confirmBtnVariant, titleIcon)
 16. ✅ Icon placement - Title icons (⚠️, 🗑️) for visual clarity, clean message content
-17. ✅ Promise-based - Async/await friendly confirmation workflow
+
+### ✅ v1.1 Quick Wins - COMPLETE
+
+**MANUAL ISSUE CREATION:**
+
+1. ✅ Add Issue button - Create issues manually during review (no OCR needed)
+2. ✅ Inline editing - Auto-focus on summary, quick succession entry
+3. ✅ Visual distinction - Light blue background with "MANUAL" badge
+4. ✅ Mixed import - OCR + manual issues in single batch
+
+**UI CONSISTENCY:**
+
+5. ✅ Autocomplete dropdowns - Color mapping uses text+datalist (consistent with project selector)
+6. ✅ Promise-based confirmations - Async/await friendly modal workflow
+
+**MOBILE RESPONSIVE DESIGN:**
+
+7. ✅ Action bar mobile layout - 2-row grid with centered badges and 2x2 button grid
+8. ✅ Table card view - Enhanced mobile cards with color-coded sections (yellow=editable, gray=read-only)
+9. ✅ Edit affordances - Visual indicators (✏️ icons, dashed borders, "Tap to edit" placeholders)
+10. ✅ Touch-friendly controls - 48px minimum touch targets, full-width buttons
+11. ✅ Responsive breakpoints - Optimized for mobile (<768px), tablet (768-991px), desktop (≥992px)
 
 ### 🐛 Known Limitations (To Be Addressed in Phase 3+)
 

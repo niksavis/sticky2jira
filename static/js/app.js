@@ -81,6 +81,7 @@ function initSocketIO() {
           image_filename: currentImageFilename,
           text: region.text || "",
           linked_text: region.linked_text || "",
+          linked_to: region.linked_to || [],
           // db_id is already included by OCR service
         };
       });
@@ -749,7 +750,7 @@ function renderOCRResults() {
   let html = "";
   appState.ocrRegions.forEach((region) => {
     const linkedText =
-      region.linked_to.length > 0
+      region.linked_to && region.linked_to.length > 0
         ? `<span class="linked-indicator">Linked to: ${region.linked_to.join(
             ", "
           )}</span>`
@@ -894,9 +895,36 @@ function loadIssueTypes(projectKey) {
       if (data.success) {
         appState.issueTypes[projectKey] = data.issue_types;
         renderColorMappings();
+      } else {
+        // Show error message if Jira API failed
+        const container = document.getElementById("colorMappings");
+        container.innerHTML = `
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>Could not load issue types:</strong> ${
+              data.error || "Unknown error"
+            }
+            <br><small>Check your Jira settings in the gear icon (⚙️) menu.</small>
+          </div>
+        `;
+        showToast(
+          "Failed to load Jira issue types. Check your connection and settings.",
+          "warning"
+        );
       }
     })
-    .catch((error) => console.error("Failed to load issue types:", error));
+    .catch((error) => {
+      console.error("Failed to load issue types:", error);
+      const container = document.getElementById("colorMappings");
+      container.innerHTML = `
+        <div class="alert alert-danger">
+          <i class="bi bi-exclamation-triangle"></i>
+          <strong>Connection Error:</strong> Could not connect to Jira.
+          <br><small>Check your Jira settings using the gear icon (⚙️) in the header.</small>
+        </div>
+      `;
+      showToast("Could not connect to Jira. Check your settings.", "danger");
+    });
 }
 
 function renderColorMappings() {
@@ -1022,11 +1050,18 @@ function renderIndividualMappings() {
     return;
   }
 
-  // Collect current color mappings
+  // Check if there are any OCR regions
+  if (!appState.ocrRegions || appState.ocrRegions.length === 0) {
+    individualContainer.innerHTML =
+      '<p class="text-muted">No regions to map. Process images first.</p>';
+    return;
+  }
+
+  // Collect current color mappings from input elements
   const colorMappings = {};
-  document.querySelectorAll(".color-mapping-select").forEach((select) => {
-    const color = select.dataset.color;
-    const issueType = select.value;
+  document.querySelectorAll(".color-mapping-select").forEach((input) => {
+    const color = input.dataset.color;
+    const issueType = input.value;
     if (issueType) {
       colorMappings[color] = issueType;
     }
