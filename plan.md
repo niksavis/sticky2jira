@@ -2,9 +2,8 @@
 
 **Created:** November 21, 2025  
 **Last Updated:** November 22, 2025  
-**Version:** 1.0.0  
-**Project Location:** `C:\Development\sticky2jira\`  
-**Status:** Production Ready ✅ | All Phases Complete
+**Version:** 1.1.0  
+**Status:** Production Ready ✅ | Phase 1-2 Complete, Phase 3 Next
 
 ## Project Overview
 
@@ -191,7 +190,59 @@ The application is fully functional with:
 10. ✅ Touch-friendly controls - 48px minimum touch targets, full-width buttons
 11. ✅ Responsive breakpoints - Optimized for mobile (<768px), tablet (768-991px), desktop (≥992px)
 
-### 🐛 Known Limitations (To Be Addressed in Phase 3+)
+### 🔧 Phase 3 - Mobile UI Uniformity (NEXT PRIORITY)
+
+**Objective:** Streamline mobile experience with consistent styling and layout across all tabs
+
+**Current Issues:**
+
+- Inconsistent button presentation across tabs (some icon-only, others icon+text for same action groups)
+- Varying table/component layouts between tabs on mobile
+- Mixed styling patterns for similar UI elements
+- Lack of unified mobile design language
+
+**Target Improvements:**
+
+1. **Button Consistency:**
+   - Standardize button presentation within action groups (all icon-only OR all icon+text)
+   - Apply uniform sizing, spacing, and touch targets (48px minimum) across all tabs
+   - Consistent use of responsive classes (d-none d-md-inline) for text labels
+   - Same visual weight for equivalent actions (Primary action = same style everywhere)
+
+2. **Table/Component Uniformity:**
+   - Consistent card layout patterns across all data views (OCR, Mapping, Issues, Results)
+   - Standardized section headers, color coding, and spacing
+   - Unified edit affordances (✏️ icons, dashed borders, yellow backgrounds)
+   - Same data-label attribute styling for all responsive tables
+
+3. **Layout Patterns:**
+   - Consistent action bar structure (badges + controls + actions) across all tabs
+   - Uniform grid layouts for button groups (2x2, 1x4, etc.)
+   - Standardized spacing and alignment within mobile containers
+   - Same collapsible panel styles for settings/options
+
+4. **Component Library Documentation:**
+   - Create mobile component pattern guide in copilot-instructions.md
+   - Document when to use icon-only vs icon+text buttons
+   - Establish mobile grid layout standards (2x2, 1x4 button grids)
+   - Define reusable CSS classes for mobile components
+
+**Implementation Priority:**
+
+- HIGH: Button presentation uniformity (most visible inconsistency)
+- MEDIUM: Table/card layout standardization
+- MEDIUM: Action bar consistency across tabs
+- LOW: Component documentation
+
+**Success Criteria:**
+
+- All buttons in same action group have identical presentation (icon-only or icon+text)
+- All tabs use same card layout pattern for data display
+- Mobile experience feels like single cohesive app, not collection of different screens
+- copilot-instructions.md documents mobile component standards
+- Zero visual inconsistencies when navigating between tabs on mobile
+
+### 🐛 Known Limitations (To Be Addressed in Phase 4+)
 
 **WORKFLOW ENHANCEMENTS:**
 
@@ -304,7 +355,7 @@ All 18 identified issues have been resolved. See Phase 1.5 and Phase 1.6 complet
 ## Project Structure
 
 ```text
-C:\Development\sticky2jira\
+sticky2jira/
 ├── plan.md (this file)
 ├── README.md (user-facing setup instructions)
 ├── __version__.py (single source of truth for version)
@@ -583,7 +634,20 @@ The application has achieved production-ready status with all planned Phase 1 an
 8. ✅ Mobile-responsive design
 9. ✅ Comprehensive error handling
 
-**Optional Future Enhancements (Phase 3+):**
+**Next Immediate Priority:**
+
+### 🔧 Phase 3 - Mobile UI Uniformity
+
+**Focus:** Streamline mobile experience with consistent styling and layout across all tabs. See Phase 3 section above for detailed implementation plan.
+
+**Key Areas:**
+
+- Button presentation consistency (icon-only vs icon+text standardization)
+- Unified table/card layout patterns
+- Consistent action bar structure
+- Mobile component library documentation
+
+**Optional Future Enhancements (Phase 4+):**
 
 If additional features are desired, consider:
 

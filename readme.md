@@ -1,4 +1,4 @@
-# <img src="static/favicon.ico" width="28" height="28" alt="Sticky2Jira" style="vertical-align: text-bottom;"> Sticky2Jira
+# <img src="static/favicon.ico" width="30" height="30" alt="Sticky2Jira" style="vertical-align: text-bottom;"> Sticky2Jira
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
