@@ -58,7 +58,8 @@ body {
 
 /* Toast Notifications */
 .toast-container {
-  margin-top: 70px; /* Below sticky header */
+  top: 135px !important; /* Below tab buttons (~70px header + ~65px tabs) */
+  margin-top: 0;
 }
 
 .toast {
@@ -106,17 +107,6 @@ body {
 .toast-header.bg-warning .btn-close,
 .toast-header.bg-info .btn-close {
   filter: none;
-}
-
-/* Progress Bar */
-#progressContainer {
-  position: sticky;
-  top: 70px; /* Below sticky header */
-  z-index: 1000;
-  background-color: white;
-  padding: 1rem;
-  border-radius: 0.5rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 /* Static Bootstrap Alerts (for OCR Summary, Import Results, etc.) */
@@ -266,6 +256,18 @@ body {
 
 #issuesTable .editable:hover {
   background-color: #f8f9fa;
+}
+
+/* Column sizing for better content display */
+#issuesTable td[data-field="summary"] {
+  min-width: 200px;
+  max-width: 300px;
+}
+
+#issuesTable td[data-field="description"] {
+  min-width: 300px;
+  max-width: 500px;
+  white-space: pre-wrap; /* Support multi-line text */
 }
 
 /* Image Preview */
@@ -604,4 +606,54 @@ body {
 #fieldDefaultsContainer .form-text {
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+/* Action Bar - Issue Review */
+#actionBar {
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+}
+
+/* Selected count badge - always visible to prevent layout shift */
+#selectedBadge {
+  min-width: 95px;
+  text-align: center;
+  transition: background-color 0.2s ease;
+}
+
+/* Bulk actions row - wraps on small screens */
+#bulkActionsRow {
+  min-height: 38px; /* Prevents height jump when buttons disabled */
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 767px) {
+  #actionBar {
+    padding: 0.75rem !important;
+  }
+
+  /* Stack rows with more spacing on mobile */
+  #actionBar > div:first-child {
+    margin-bottom: 0.5rem;
+  }
+
+  /* Make badges slightly smaller on mobile */
+  #actionBar .badge {
+    font-size: 0.875rem;
+  }
+
+  /* Full width buttons on mobile for better touch targets */
+  #actionBar .btn-sm {
+    padding: 0.375rem 0.5rem;
+  }
+}
+
+/* Tablet and up */
+@media (min-width: 768px) {
+  /* Vertical divider only shows on larger screens */
+  #bulkActionsRow .vr {
+    height: 24px;
+    opacity: 0.5;
+  }
 }

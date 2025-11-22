@@ -67,6 +67,9 @@ console_handler.setFormatter(
 )
 app.logger.addHandler(console_handler)
 
+# Suppress werkzeug INFO logs (404s for .map files, etc.)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
 app.logger.info("Sticky2Jira application starting...")
 
 
@@ -409,6 +412,7 @@ def process_ocr():
         # Process in background thread
         def process_thread():
             try:
+                # Process image - OCR service already saves to database and includes db_id
                 process_image_async(filepath, socketio, callback_event="ocr_progress")
             except Exception as e:
                 app.logger.error(f"OCR thread failed: {str(e)}", exc_info=True)
@@ -436,11 +440,32 @@ def process_ocr():
 def save_color_mapping():
     """Save color-to-issue-type mappings."""
     try:
-        app.logger.info("Saving color mappings")
+        data = request.json
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
 
-        # TODO: Implement mapping persistence using session_manager
+        project_key = data.get("project_key")
+        mappings = data.get("mappings", {})
 
-        return jsonify({"success": True, "message": "Mappings saved"})
+        if not project_key:
+            return jsonify({"success": False, "error": "Project key required"}), 400
+
+        app.logger.info(f"Saving {len(mappings)} color mappings for {project_key}")
+
+        # Save each color mapping
+        saved_count = 0
+        for color_hex, issue_type in mappings.items():
+            if color_hex and issue_type:
+                session_manager.save_color_mapping(project_key, color_hex, issue_type)
+                saved_count += 1
+
+        return jsonify(
+            {
+                "success": True,
+                "message": f"Saved {saved_count} color mappings",
+                "saved": saved_count,
+            }
+        )
     except Exception as e:
         app.logger.error(f"Failed to save mappings: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
@@ -451,13 +476,17 @@ def load_color_mapping():
     """Load saved color mappings for current project."""
     try:
         project_key = request.args.get("project_key")
+
+        if not project_key:
+            return jsonify({"success": False, "error": "Project key required"}), 400
+
         app.logger.info(f"Loading color mappings for {project_key}")
 
-        # TODO: Implement mapping retrieval using session_manager
+        mappings = session_manager.get_color_mappings(project_key)
 
-        return jsonify({"success": True, "mappings": {}})
+        return jsonify({"success": True, "mappings": mappings, "count": len(mappings)})
     except Exception as e:
-        app.logger.error(f"Failed to save mappings: {str(e)}", exc_info=True)
+        app.logger.error(f"Failed to load mappings: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -785,21 +814,61 @@ def bulk_update_mapping():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
-@app.route("/api/issues/<int:issue_id>", methods=["PUT"])
-def update_single_issue(issue_id):
-    """Update a single issue field (summary or description)."""
+@app.route("/api/issues/delete", methods=["POST"])
+def delete_issues():
+    """Delete issues by their database IDs."""
     try:
         data = request.json
         if not data:
             return jsonify({"success": False, "error": "No data provided"}), 400
 
-        app.logger.info(f"Updating issue {issue_id}: {data}")
+        issue_ids = data.get("ids", [])
 
-        if session_manager.update_issue(issue_id, data):
+        if not issue_ids:
+            return jsonify({"success": False, "error": "No issue IDs provided"}), 400
+
+        session_manager.delete_issues(issue_ids)
+        app.logger.info(f"Deleted {len(issue_ids)} issue(s)")
+        return jsonify({"success": True, "deleted": len(issue_ids)})
+    except Exception as e:
+        app.logger.error(f"Delete issues failed: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/issues/<int:issue_id>", methods=["PUT"])
+def update_issue(issue_id):
+    """Update a single issue by ID (for inline editing)."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        # Map frontend field names to database column names
+        field_mapping = {
+            "summary": "summary",
+            "description": "description",
+            "project_key": "project_key",
+            "issue_type": "issue_type",
+        }
+
+        update_data = {}
+        for frontend_field, db_field in field_mapping.items():
+            if frontend_field in data:
+                update_data[db_field] = data[frontend_field]
+
+        if not update_data:
+            return jsonify(
+                {"success": False, "error": "No valid fields to update"}
+            ), 400
+
+        if session_manager.update_issue(issue_id, update_data):
+            app.logger.info(f"Updated issue {issue_id}: {list(update_data.keys())}")
             return jsonify({"success": True, "message": "Issue updated"})
         else:
             return jsonify({"success": False, "error": "Update failed"}), 500
     except Exception as e:
+        app.logger.error(f"Update issue failed: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "error": str(e)}), 500
         app.logger.error(f"Update issue failed: {str(e)}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 

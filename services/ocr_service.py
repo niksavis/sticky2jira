@@ -190,6 +190,15 @@ class OCRService:
         hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         total_regions = len(sticky_clusters)
 
+        # Emit initial progress
+        if progress_callback:
+            progress_callback(
+                current=0,
+                total=total_regions,
+                status="processing",
+                message=f"Starting OCR on {total_regions} regions",
+            )
+
         for i, cluster in enumerate(sticky_clusters):
             # Calculate bounding box of the cluster
             text_bbox = cluster["bbox"]

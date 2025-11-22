@@ -350,6 +350,26 @@ def truncate_issues() -> None:
     logger.info("Truncated issues table for new session")
 
 
+def delete_issues(issue_ids: list) -> bool:
+    """
+    Delete specific issues by their database IDs.
+
+    Args:
+        issue_ids: List of issue database IDs to delete
+
+    Returns:
+        True if deletion was successful
+    """
+    if not issue_ids:
+        return True
+
+    with get_db_connection() as conn:
+        placeholders = ",".join("?" * len(issue_ids))
+        conn.execute(f"DELETE FROM issues WHERE id IN ({placeholders})", issue_ids)
+    logger.info(f"Deleted {len(issue_ids)} issue(s) from database")
+    return True
+
+
 def clear_session_data() -> None:
     """
     Clear all session data except Jira configuration and field defaults.

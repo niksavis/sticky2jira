@@ -32,36 +32,63 @@ function initSocketIO() {
 
   appState.socket.on("connect", () => {
     console.log("Connected to server via SocketIO");
-    showAlert("Connected to server", "success", 3000);
+    showToast("Connected to server", "success", 3000);
   });
 
   appState.socket.on("disconnect", () => {
     console.log("Disconnected from server");
-    showAlert("Disconnected from server", "warning");
+    showToast("Disconnected from server", "warning");
   });
 
   // OCR Progress
   appState.socket.on("ocr_progress", (data) => {
     console.log("OCR Progress:", data);
-    updateProgress(data.percent, data.message);
+
+    // Calculate overall progress for multi-image processing
+    let overallPercent = data.percent;
+    let overallMessage = data.message;
+
+    const totalImages = appState.uploadedImages
+      ? appState.uploadedImages.length
+      : 1;
+
+    if (totalImages > 1 && appState.currentImage) {
+      // Multi-image: calculate combined progress
+      const currentImageIndex = appState.uploadedImages.indexOf(
+        appState.currentImage
+      );
+      const imagesCompleted = currentImageIndex; // Images before current one
+      const currentImageProgress = data.percent; // Progress on current image (0-100)
+
+      // Overall = (completed images + current image progress) / total images
+      overallPercent =
+        (imagesCompleted * 100 + currentImageProgress) / totalImages;
+      overallMessage = `Image ${currentImageIndex + 1}/${totalImages}: ${
+        data.message
+      }`;
+    }
+
+    updateProgress(overallPercent, overallMessage);
 
     if (data.status === "complete") {
-      // Append regions instead of replace (multi-image support)
-      // Renumber IDs to be globally unique
-      const currentImageFilename = appState.currentImage; // Store current image filename
+      // OCR service already saved to database and included db_id in regions
+      const currentImageFilename = appState.currentImage;
       const newRegions = data.regions.map((region) => {
         appState.maxRegionId++;
         return {
           ...region,
           id: appState.maxRegionId,
-          image_filename: currentImageFilename, // Add image filename to region
+          image_filename: currentImageFilename,
+          text: region.text || "",
+          linked_text: region.linked_text || "",
+          // db_id is already included by OCR service
         };
       });
       appState.ocrRegions.push(...newRegions);
 
       hideProgress();
       renderOCRResults();
-      showAlert(
+      showToast(
         `OCR processing complete! Found ${newRegions.length} regions (${appState.ocrRegions.length} total)`,
         "success"
       );
@@ -93,7 +120,7 @@ function initSocketIO() {
         : data.message.includes("OutOfMemory")
         ? "Image too large - please use a smaller image (max 2000px)"
         : "OCR processing failed - please try again";
-      showAlert(userMsg, "danger");
+      showToast(userMsg, "danger");
       console.error("OCR Error Details:", data.message);
 
       // If processing multiple images, continue to next even on error
@@ -112,7 +139,7 @@ function initSocketIO() {
     if (data.status === "complete") {
       hideProgress();
       renderImportResults(data);
-      showAlert("Import complete!", "success");
+      showToast("Import complete!", "success");
       switchTab("results-tab");
 
       // Update Results badge with created + updated count
@@ -130,7 +157,7 @@ function initSocketIO() {
         : data.message.includes("field")
         ? "Missing required Jira field - configure defaults in Setup tab"
         : "Import failed - check Results tab for details";
-      showAlert(userMsg, "danger");
+      showToast(userMsg, "danger");
       console.error("Import Error Details:", data.message);
     }
   });
@@ -149,9 +176,35 @@ function loadJiraSettings() {
         populateJiraForm(data.settings);
         // Load projects to populate default project dropdown
         loadProjects();
+        // Update action bar state (enables Import button if configured)
+        if (typeof updateActionBar === "function") {
+          updateActionBar();
+        }
+        // Update settings badge if configuration exists
+        updateSettingsBadge();
       }
     })
     .catch((error) => console.error("Failed to load Jira settings:", error));
+}
+
+function updateSettingsBadge() {
+  const badge = document.getElementById("settingsBadge");
+  if (!badge) return;
+
+  // Check if we have basic Jira configuration
+  if (
+    appState.jiraSettings &&
+    appState.jiraSettings.server_url &&
+    appState.jiraSettings.api_token
+  ) {
+    // Show checkmark to indicate configuration exists
+    badge.innerHTML = '<span class="badge bg-success ms-1">✓</span>';
+    badge.title = "Jira configured";
+  } else {
+    // Clear badge if no configuration
+    badge.innerHTML = "";
+    badge.title = "";
+  }
 }
 
 function populateJiraForm(settings) {
@@ -193,7 +246,7 @@ function populateJiraForm(settings) {
 function testJiraConnection() {
   const settings = getJiraFormData();
 
-  showAlert("Testing connection...", "info");
+  showToast("Testing connection...", "info");
 
   fetch("/api/jira/test-connection", {
     method: "POST",
@@ -203,13 +256,13 @@ function testJiraConnection() {
     .then((response) => response.json())
     .then((data) => {
       if (data.success) {
-        showAlert(`Connected to ${data.server_title}`, "success");
+        showToast(`Connected to ${data.server_title}`, "success");
       } else {
-        showAlert(`Connection failed: ${data.error}`, "danger");
+        showToast(`Connection failed: ${data.error}`, "danger");
       }
     })
     .catch((error) => {
-      showAlert(`Connection error: ${error.message}`, "danger");
+      showToast(`Connection error: ${error.message}`, "danger");
     });
 }
 
@@ -226,17 +279,23 @@ function saveJiraSettings(event) {
     .then((data) => {
       if (data.success) {
         appState.jiraSettings = settings;
-        showAlert("Settings saved successfully", "success");
+        showToast("Settings saved successfully", "success");
         // Reload projects to update both dropdowns
         loadProjects();
         // Mark setup as complete
         updateTabBadge("setup", "complete");
+        // Update settings button badge
+        updateSettingsBadge();
+        // Update action bar state (enables Import button)
+        if (typeof updateActionBar === "function") {
+          updateActionBar();
+        }
       } else {
-        showAlert(`Failed to save settings: ${data.error}`, "danger");
+        showToast(`Failed to save settings: ${data.error}`, "danger");
       }
     })
     .catch((error) => {
-      showAlert(`Save error: ${error.message}`, "danger");
+      showToast(`Save error: ${error.message}`, "danger");
     });
 }
 
@@ -305,18 +364,18 @@ function handleDrop(e) {
     // Validate all are image files
     const validFiles = filesArray.filter((file) => {
       if (!file.type.startsWith("image/")) {
-        showAlert(`Skipping ${file.name} - not an image file`, "warning");
+        showToast(`Skipping ${file.name} - not an image file`, "warning");
         return false;
       }
       if (file.size > 5 * 1024 * 1024) {
-        showAlert(`Skipping ${file.name} - exceeds 5MB limit`, "warning");
+        showToast(`Skipping ${file.name} - exceeds 5MB limit`, "warning");
         return false;
       }
       return true;
     });
 
     if (validFiles.length === 0) {
-      showAlert("No valid image files dropped", "danger");
+      showToast("No valid image files dropped", "danger");
       return;
     }
 
@@ -335,7 +394,7 @@ function handleDrop(e) {
       appState.selectedImages.length;
     document.getElementById("uploadBtnCount").style.display = "inline";
 
-    showAlert(
+    showToast(
       `Added ${validFiles.length} image(s). Total: ${appState.selectedImages.length}`,
       "info",
       3000
@@ -372,7 +431,7 @@ function handlePaste(e) {
 
       // Validate file size
       if (file.size > 5 * 1024 * 1024) {
-        showAlert("Pasted image exceeds 5MB limit", "warning");
+        showToast("Pasted image exceeds 5MB limit", "warning");
         return;
       }
 
@@ -391,7 +450,7 @@ function handlePaste(e) {
         appState.selectedImages.length;
       document.getElementById("uploadBtnCount").style.display = "inline";
 
-      showAlert(
+      showToast(
         `Image pasted from clipboard. Total: ${appState.selectedImages.length}`,
         "info",
         2000
@@ -412,7 +471,7 @@ function handleImageSelect(event) {
 
     // Validate file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
-      showAlert(
+      showToast(
         `File ${file.name} is too large. Maximum size is 5MB per image.`,
         "warning"
       );
@@ -423,7 +482,7 @@ function handleImageSelect(event) {
   }
 
   if (validFiles.length === 0) {
-    showAlert("No valid images selected.", "danger");
+    showToast("No valid images selected.", "danger");
     return;
   }
 
@@ -442,7 +501,7 @@ function handleImageSelect(event) {
     appState.selectedImages.length;
   document.getElementById("uploadBtnCount").style.display = "inline";
 
-  showAlert(
+  showToast(
     `Added ${validFiles.length} image(s). Total: ${appState.selectedImages.length}`,
     "info",
     3000
@@ -525,7 +584,7 @@ function uploadImage() {
       );
       setButtonState("#processOcrBtn", true);
       document.getElementById("uploadImageBtn").disabled = true;
-      showAlert(`${uploadedCount} image(s) uploaded successfully`, "success");
+      showToast(`${uploadedCount} image(s) uploaded successfully`, "success");
       return;
     }
 
@@ -551,12 +610,12 @@ function uploadImage() {
           uploadNext(index + 1);
         } else {
           hideProgress();
-          showAlert(`Upload failed for ${file.name}: ${data.error}`, "danger");
+          showToast(`Upload failed for ${file.name}: ${data.error}`, "danger");
         }
       })
       .catch((error) => {
         hideProgress();
-        showAlert(`Upload error for ${file.name}: ${error.message}`, "danger");
+        showToast(`Upload error for ${file.name}: ${error.message}`, "danger");
       });
   };
 
@@ -586,11 +645,18 @@ function startOCRProcessing() {
 
     const filename = images[currentIndex];
     const imageNumber = currentIndex + 1;
-    const percent = Math.round((imageNumber / images.length) * 100);
-    showProgress(
-      percent,
-      `Processing ${imageNumber}/${images.length}: ${filename}...`
-    );
+
+    // Show initial progress for all images (single or multi-image)
+    if (images.length === 1) {
+      showProgress(0, `Processing ${filename}...`);
+    } else {
+      // Multi-image: show overall progress
+      const overallPercent = Math.round((currentIndex / images.length) * 100);
+      showProgress(
+        overallPercent,
+        `Processing image ${imageNumber}/${images.length}: ${filename}...`
+      );
+    }
 
     // Increment currentIndex now, before async operations
     currentIndex++;
@@ -614,14 +680,14 @@ function startOCRProcessing() {
           // SocketIO handler will call processNext() when OCR completes
         } else {
           hideProgress();
-          showAlert(`OCR failed for ${filename}: ${data.error}`, "danger");
+          showToast(`OCR failed for ${filename}: ${data.error}`, "danger");
           // Skip this image and move to next
           processNext();
         }
       })
       .catch((error) => {
         hideProgress();
-        showAlert(`OCR error: ${error.message}`, "danger");
+        showToast(`OCR error: ${error.message}`, "danger");
         // Skip this image and move to next
         processNext();
       });
@@ -737,13 +803,13 @@ function loadProjects() {
         populateProjectSelect();
 
         if (data.projects.length === 0) {
-          showAlert(
+          showToast(
             "No Jira projects found. Please check your Jira connection.",
             "warning"
           );
         }
       } else {
-        showAlert(`Failed to load projects: ${data.error}`, "danger");
+        showToast(`Failed to load projects: ${data.error}`, "danger");
         // Clear project select on error
         const input = document.getElementById("mappingProject");
         const datalist = document.getElementById("projectList");
@@ -754,7 +820,7 @@ function loadProjects() {
     })
     .catch((error) => {
       console.error("Failed to load projects:", error);
-      showAlert(
+      showToast(
         "Failed to load projects. Please configure Jira connection in Setup tab.",
         "danger"
       );
@@ -775,7 +841,6 @@ function populateProjectSelect() {
   const fieldDefaultsDatalist = document.getElementById(
     "fieldDefaultsProjectList"
   );
-  const bulkProjectSelect = document.getElementById("bulkProject");
 
   mappingDatalist.innerHTML = "";
   if (defaultDatalist) {
@@ -783,10 +848,6 @@ function populateProjectSelect() {
   }
   if (fieldDefaultsDatalist) {
     fieldDefaultsDatalist.innerHTML = "";
-  }
-  if (bulkProjectSelect) {
-    // Clear and reset bulk project dropdown
-    bulkProjectSelect.innerHTML = '<option value="">Set Project...</option>';
   }
 
   appState.projects.forEach((project) => {
@@ -810,14 +871,6 @@ function populateProjectSelect() {
       fieldDefaultOption.value = project.key;
       fieldDefaultOption.textContent = `${project.key} - ${project.name}`;
       fieldDefaultsDatalist.appendChild(fieldDefaultOption);
-    }
-
-    // Populate bulk project dropdown
-    if (bulkProjectSelect) {
-      const bulkOption = document.createElement("option");
-      bulkOption.value = project.key;
-      bulkOption.textContent = `${project.key} - ${project.name}`;
-      bulkProjectSelect.appendChild(bulkOption);
     }
   });
 
@@ -858,6 +911,25 @@ function renderColorMappings() {
     return;
   }
 
+  // Load saved color mappings from database first
+  fetch(`/api/mapping/load?project_key=${projectKey}`)
+    .then((response) => response.json())
+    .then((data) => {
+      const savedMappings = data.success ? data.mappings : {};
+      console.log(
+        `Loaded ${Object.keys(savedMappings).length} saved color mappings`
+      );
+      renderColorMappingsUI(projectKey, savedMappings);
+    })
+    .catch((error) => {
+      console.error("Failed to load color mappings:", error);
+      renderColorMappingsUI(projectKey, {});
+    });
+}
+
+function renderColorMappingsUI(projectKey, savedMappings = {}) {
+  const container = document.getElementById("colorMappings");
+
   // Get unique colors using Set based on hex value
   const uniqueColorHexes = [
     ...new Set(appState.ocrRegions.map((r) => r.color_hex)),
@@ -878,9 +950,11 @@ function renderColorMappings() {
 
   console.log("Color map entries:", colorMap.size);
 
-  // Render color-to-issue-type mappings
+  // Render color-to-issue-type mappings with saved values
   let colorHtml = "<h6>Color to Issue Type Mapping</h6>";
   colorMap.forEach((name, hex) => {
+    const savedIssueType = savedMappings[hex] || "";
+
     colorHtml += `
       <div class="color-mapping-row mb-2">
         <span class="color-badge" style="background-color: ${hex};"></span>
@@ -888,13 +962,27 @@ function renderColorMappings() {
         <select class="form-select color-mapping-select" data-color="${hex}" style="max-width: 300px;">
           <option value="">Select issue type...</option>
           ${appState.issueTypes[projectKey]
-            .map((it) => `<option value="${it.name}">${it.name}</option>`)
+            .map(
+              (it) =>
+                `<option value="${it.name}" ${
+                  it.name === savedIssueType ? "selected" : ""
+                }>${it.name}</option>`
+            )
             .join("")}
         </select>
       </div>
     `;
   });
   container.innerHTML = colorHtml;
+
+  // Apply saved mappings to regions
+  if (Object.keys(savedMappings).length > 0) {
+    appState.ocrRegions.forEach((region) => {
+      if (savedMappings[region.color_hex]) {
+        region.issue_type = savedMappings[region.color_hex];
+      }
+    });
+  }
 
   // Add change listeners to auto-apply mappings to all regions with that color
   document.querySelectorAll(".color-mapping-select").forEach((select) => {
@@ -1019,14 +1107,6 @@ function showToast(message, type = "info", duration = 5000) {
 }
 
 /**
- * Legacy function - redirects to showToast for backward compatibility
- * @deprecated Use showToast() instead
- */
-function showAlert(message, type, duration = null) {
-  showToast(message, type, duration || 5000);
-}
-
-/**
  * Set button enabled/disabled state with optional tooltip
  * @param {string} selector - CSS selector or element ID
  * @param {boolean} enabled - Whether button should be enabled
@@ -1093,13 +1173,15 @@ function refreshIssuesTable() {
  * @param {string} title - Modal title (default: "Confirm Action")
  * @param {string} confirmBtnText - Confirm button text (default: "Confirm")
  * @param {string} confirmBtnVariant - Bootstrap color variant for confirm button (default: "danger")
+ * @param {string} titleIcon - Optional icon to display before title (e.g., "⚠️", "🗑️", "✓")
  * @returns {Promise<boolean>} - Resolves to true if confirmed, false if canceled
  */
 function showConfirm(
   message,
   title = "Confirm Action",
   confirmBtnText = "Confirm",
-  confirmBtnVariant = "danger"
+  confirmBtnVariant = "danger",
+  titleIcon = ""
 ) {
   return new Promise((resolve) => {
     const modal = document.getElementById("confirmModal");
@@ -1109,7 +1191,7 @@ function showConfirm(
     const confirmBtn = document.getElementById("confirmModalConfirmBtn");
 
     // Set content
-    titleEl.textContent = title;
+    titleEl.innerHTML = titleIcon ? `${titleIcon} ${title}` : title;
     bodyEl.innerHTML = message.replace(/\n/g, "<br>");
     confirmBtn.textContent = confirmBtnText;
     confirmBtn.className = `btn btn-${confirmBtnVariant}`;
@@ -1149,12 +1231,24 @@ function showConfirm(
  */
 function validateTabPrerequisites(tabId) {
   const prerequisites = {
-    upload: null, // No prerequisites
+    upload: () => {
+      // Check if Jira is configured
+      if (!appState.jiraSettings || !appState.jiraSettings.server_url) {
+        return "💡 Tip: Configure Jira settings using the gear icon (⚙️) in the header to enable import functionality.";
+      }
+      return null;
+    },
     setup: null,
-    ocr: () =>
-      appState.uploadedImages.length > 0
+    ocr: () => {
+      // Check if Jira is configured first
+      if (!appState.jiraSettings || !appState.jiraSettings.server_url) {
+        return "💡 Tip: Configure Jira settings using the gear icon (⚙️) in the header before processing images.";
+      }
+      // Check if images uploaded
+      return appState.uploadedImages.length > 0
         ? null
-        : "Tip: Upload images in the Upload tab to get started",
+        : "Tip: Upload images in the Upload tab to get started";
+    },
     mapping: () =>
       appState.ocrRegions.length > 0
         ? null
@@ -1188,28 +1282,69 @@ function validateTabPrerequisites(tabId) {
 
 function showProgress(percent, message) {
   const container = document.getElementById("progressContainer");
+  const messageContainer = document.getElementById("progressMessage");
   const bar = document.getElementById("progressBar");
-  const msg = document.getElementById("progressMessage");
+  const text = document.getElementById("progressText");
+  const percentText = document.getElementById("progressPercent");
 
-  container.style.display = "block";
-  bar.style.width = `${percent}%`;
-  bar.setAttribute("aria-valuenow", percent);
-  msg.textContent = message;
+  // Add a small delay before showing progress to avoid flash for quick operations
+  clearTimeout(appState.progressTimeout);
+  appState.progressTimeout = setTimeout(() => {
+    // Show progress bar
+    container.style.display = "block";
+    bar.style.width = `${percent}%`;
+    bar.setAttribute("aria-valuenow", percent);
+
+    // Activate message container (fade in content)
+    const messageContent = document.getElementById("progressMessageContent");
+    messageContainer.style.backgroundColor = "#f8f9fa";
+    messageContent.style.opacity = "1";
+    text.textContent = message;
+    percentText.textContent = `${Math.round(percent)}%`;
+  }, 300); // Only show if operation takes longer than 300ms
 }
 
 function updateProgress(percent, message) {
+  const container = document.getElementById("progressContainer");
+  const messageContainer = document.getElementById("progressMessage");
+  const messageContent = document.getElementById("progressMessageContent");
   const bar = document.getElementById("progressBar");
-  const msg = document.getElementById("progressMessage");
+  const text = document.getElementById("progressText");
+  const percentText = document.getElementById("progressPercent");
+
+  // If progress isn't visible yet, cancel timeout and show immediately
+  if (container.style.display === "none") {
+    clearTimeout(appState.progressTimeout);
+    container.style.display = "block";
+    messageContainer.style.backgroundColor = "#f8f9fa";
+    messageContent.style.opacity = "1";
+  }
 
   bar.style.width = `${percent}%`;
   bar.setAttribute("aria-valuenow", percent);
-  msg.textContent = message;
+  text.textContent = message;
+  percentText.textContent = `${Math.round(percent)}%`;
 }
 
 function hideProgress() {
-  document.getElementById("progressContainer").style.display = "none";
-}
+  // Cancel any pending progress display
+  clearTimeout(appState.progressTimeout);
 
+  const container = document.getElementById("progressContainer");
+  const messageContainer = document.getElementById("progressMessage");
+  const messageContent = document.getElementById("progressMessageContent");
+
+  // Hide progress bar
+  container.style.display = "none";
+
+  // Deactivate message container (fade out content, keep space)
+  messageContainer.style.backgroundColor = "transparent";
+  messageContent.style.opacity = "0";
+
+  // Reset for next use
+  const bar = document.getElementById("progressBar");
+  bar.style.width = "0%";
+}
 function switchTab(tabId) {
   // Extract the tab name without the '-tab' suffix for validation
   const tabName = tabId.replace("-tab", "");
@@ -1297,11 +1432,11 @@ function renderImportResults(data) {
 
 function retryFailedImport() {
   if (!appState.failedIssues || appState.failedIssues.length === 0) {
-    showAlert("No failed issues to retry", "info");
+    showToast("No failed issues to retry", "info");
     return;
   }
 
-  showAlert(
+  showToast(
     `Retrying ${appState.failedIssues.length} failed issue(s)...`,
     "info"
   );
@@ -1322,15 +1457,15 @@ function retryFailedImport() {
     .then((response) => response.json())
     .then((data) => {
       if (data.success) {
-        showAlert("Retry started - check Results tab for progress", "success");
+        showToast("Retry started - check Results tab for progress", "success");
       } else {
         hideProgress();
-        showAlert(`Retry failed: ${data.error}`, "danger");
+        showToast(`Retry failed: ${data.error}`, "danger");
       }
     })
     .catch((error) => {
       hideProgress();
-      showAlert(`Retry error: ${error.message}`, "danger");
+      showToast(`Retry error: ${error.message}`, "danger");
     });
 }
 
@@ -1350,6 +1485,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Load saved Jira settings
   loadJiraSettings();
+
+  // Settings button in header - opens Settings tab
+  document.getElementById("settingsBtn").addEventListener("click", () => {
+    switchTab("setup-tab");
+  });
 
   // Add tab prerequisite validation (informative, non-blocking)
   document.querySelectorAll('[data-bs-toggle="tab"]').forEach((tabTrigger) => {
@@ -1451,12 +1591,6 @@ document.addEventListener("DOMContentLoaded", () => {
     loadIssueTypes(e.target.value);
   });
 
-  // Mapping form submit - prevent default and show success message
-  document.getElementById("mappingForm").addEventListener("submit", (e) => {
-    e.preventDefault();
-    showAlert("Mappings saved successfully!", "success", 3000);
-  });
-
   // Proceed to Issue Review button
   document
     .getElementById("proceedToIssuesBtn")
@@ -1530,54 +1664,14 @@ document.addEventListener("DOMContentLoaded", () => {
     document
       .querySelectorAll(".row-checkbox")
       .forEach((cb) => (cb.checked = true));
-    updateBulkToolbar();
+    updateActionBar();
   });
 
   document.getElementById("deselectAllBtn")?.addEventListener("click", () => {
     document
       .querySelectorAll(".row-checkbox")
       .forEach((cb) => (cb.checked = false));
-    updateBulkToolbar();
-  });
-
-  document.getElementById("bulkProject")?.addEventListener("change", (e) => {
-    const projectKey = e.target.value;
-    if (!projectKey) return;
-
-    const selectedIndices = Array.from(
-      document.querySelectorAll(".row-checkbox:checked")
-    ).map((cb) => parseInt(cb.dataset.index));
-
-    selectedIndices.forEach((index) => {
-      appState.ocrRegions[index].project_key = projectKey;
-    });
-
-    populateReviewTable();
-    showAlert(
-      `Project set to ${projectKey} for ${selectedIndices.length} issue(s)`,
-      "success",
-      3000
-    );
-  });
-
-  document.getElementById("bulkType")?.addEventListener("change", (e) => {
-    const issueType = e.target.value;
-    if (!issueType) return;
-
-    const selectedIndices = Array.from(
-      document.querySelectorAll(".row-checkbox:checked")
-    ).map((cb) => parseInt(cb.dataset.index));
-
-    selectedIndices.forEach((index) => {
-      appState.ocrRegions[index].issue_type = issueType;
-    });
-
-    populateReviewTable();
-    showAlert(
-      `Type set to ${issueType} for ${selectedIndices.length} issue(s)`,
-      "success",
-      3000
-    );
+    updateActionBar();
   });
 
   document.getElementById("bulkDeleteBtn")?.addEventListener("click", () => {
@@ -1593,20 +1687,90 @@ document.addEventListener("DOMContentLoaded", () => {
       `Delete ${selectedIndices.length} selected issue(s)?`,
       "Delete Issues",
       "Delete",
-      "danger"
+      "danger",
+      "🗑️"
     ).then((confirmed) => {
       if (confirmed) {
+        // Collect db_ids before deleting from frontend
+        const dbIds = selectedIndices
+          .map((index) => appState.ocrRegions[index]?.db_id)
+          .filter((id) => id); // Filter out undefined/null
+
+        // Delete from frontend state
         selectedIndices.forEach((index) => {
           appState.ocrRegions.splice(index, 1);
         });
 
         populateReviewTable();
-        updateBulkToolbar(); // Reset selection UI
-        showAlert(
+        updateActionBar(); // Reset selection UI
+        showToast(
           `Deleted ${selectedIndices.length} issue(s)`,
           "success",
           3000
         );
+
+        // Delete from database
+        if (dbIds.length > 0) {
+          fetch("/api/issues/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: dbIds }),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (!data.success) {
+                console.error("Failed to delete issues from database");
+              }
+            })
+            .catch((error) => {
+              console.error("Bulk delete error:", error);
+            });
+        }
+      }
+    });
+  });
+
+  // Delete All button
+  document.getElementById("deleteAllBtn")?.addEventListener("click", () => {
+    const totalIssues = appState.ocrRegions.length;
+    if (totalIssues === 0) return;
+
+    showConfirm(
+      `Delete all ${totalIssues} issue(s)? This cannot be undone.`,
+      "Delete All Issues",
+      "Delete All",
+      "danger",
+      "🗑️"
+    ).then((confirmed) => {
+      if (confirmed) {
+        // Collect all db_ids before clearing
+        const dbIds = appState.ocrRegions
+          .map((region) => region.db_id)
+          .filter((id) => id); // Filter out undefined/null
+
+        // Clear frontend state
+        appState.ocrRegions = [];
+        populateReviewTable();
+        updateActionBar();
+        showToast("All issues deleted", "success", 3000);
+
+        // Delete from database
+        if (dbIds.length > 0) {
+          fetch("/api/issues/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: dbIds }),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (!data.success) {
+                console.error("Failed to delete all issues from database");
+              }
+            })
+            .catch((error) => {
+              console.error("Delete all error:", error);
+            });
+        }
       }
     });
   });
@@ -1614,7 +1778,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // New session button
   document.getElementById("newSessionBtn").addEventListener("click", () => {
     showConfirm(
-      "<strong>⚠️ WARNING:</strong> This will permanently delete:<br>" +
+      "This will permanently delete:<br>" +
         "• All OCR regions and imported issues<br>" +
         "• Color mappings<br>" +
         "• Import history<br>" +
@@ -1623,7 +1787,8 @@ document.addEventListener("DOMContentLoaded", () => {
         "Are you sure you want to start a new session?",
       "Clear Session",
       "Yes, Clear Everything",
-      "danger"
+      "danger",
+      "⚠️"
     ).then((confirmed) => {
       if (confirmed) {
         fetch("/api/session/new", { method: "POST" })
@@ -1640,12 +1805,12 @@ document.addEventListener("DOMContentLoaded", () => {
               // Reload to reset UI
               location.reload();
             } else {
-              showAlert(`Failed to start new session: ${data.error}`, "danger");
+              showToast(`Failed to start new session: ${data.error}`, "danger");
             }
           })
           .catch((error) => {
             console.error("New session error:", error);
-            showAlert("Failed to start new session", "danger");
+            showToast("Failed to start new session", "danger");
           });
       }
     });
@@ -1653,17 +1818,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Global keyboard shortcuts
   document.addEventListener("keydown", (e) => {
-    // Ctrl+A - Select all issues (in Issue Review tab)
+    // Ctrl+A - Select all issues (in Issue Review tab, but not when editing)
     if (
       e.ctrlKey &&
       e.key === "a" &&
-      document.getElementById("issues").classList.contains("active")
+      document.getElementById("issues").classList.contains("active") &&
+      !e.target.hasAttribute("contenteditable") &&
+      e.target.tagName !== "INPUT" &&
+      e.target.tagName !== "TEXTAREA"
     ) {
       e.preventDefault();
       document
         .querySelectorAll(".row-checkbox")
         .forEach((cb) => (cb.checked = true));
-      updateBulkToolbar();
+      updateActionBar();
     }
 
     // Delete key - Delete selected issues (if any selected)
@@ -1680,7 +1848,7 @@ document.addEventListener("DOMContentLoaded", () => {
       document
         .querySelectorAll(".row-checkbox")
         .forEach((cb) => (cb.checked = false));
-      updateBulkToolbar();
+      updateActionBar();
     }
   });
 });
@@ -1689,7 +1857,7 @@ function applyColorMappingsAndProceed() {
   const projectKey = document.getElementById("mappingProject").value;
 
   if (!projectKey) {
-    showAlert("Please select a project first", "warning");
+    showToast("Please select a project first", "warning");
     return;
   }
 
@@ -1702,7 +1870,7 @@ function applyColorMappingsAndProceed() {
   });
 
   if (unmappedRegions.length > 0) {
-    showAlert(
+    showToast(
       `Please assign issue types to all colors in the mapping section above. ${unmappedRegions.length} issue(s) still need mapping.`,
       "warning"
     );
@@ -1714,7 +1882,36 @@ function applyColorMappingsAndProceed() {
     region.project_key = projectKey;
   });
 
-  // Save mappings to database
+  // Collect color mappings for persistence
+  const colorMappings = {};
+  document.querySelectorAll(".color-mapping-select").forEach((select) => {
+    const color = select.dataset.color;
+    const issueType = select.value;
+    if (color && issueType) {
+      colorMappings[color] = issueType;
+    }
+  });
+
+  // Save color mappings to database
+  if (Object.keys(colorMappings).length > 0) {
+    fetch("/api/mapping/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_key: projectKey,
+        mappings: colorMappings,
+      }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          console.log(`Saved ${data.saved} color mappings to database`);
+        }
+      })
+      .catch((error) => console.error("Failed to save color mappings:", error));
+  }
+
+  // Save issue mappings to database
   const updates = appState.ocrRegions.map((region) => ({
     id: region.db_id,
     project_key: projectKey,
@@ -1739,12 +1936,12 @@ function applyColorMappingsAndProceed() {
         updateTabBadge("mapping", "complete");
         updateTabBadge("issues", "count", appState.ocrRegions.length);
       } else {
-        showAlert("Failed to save mappings", "danger");
+        showToast("Failed to save mappings", "danger");
       }
     })
     .catch((error) => {
       console.error("Failed to save mappings:", error);
-      showAlert("Failed to save mappings", "danger");
+      showToast("Failed to save mappings", "danger");
     });
 }
 
@@ -1779,10 +1976,12 @@ function populateReviewTable() {
         region.color_hex
       };"></span></td>
       <td data-label="Issue Key">${issueKeyCell}</td>
-      <td data-label="Project" contenteditable="true" data-field="project_key" data-id="${index}">${
-      region.project_key || ""
+      <td data-label="Project" class="editable-autocomplete" data-field="project_key" data-id="${index}" data-type="project">${
+      region.project_key || '<span class="text-muted">Click to set</span>'
     }</td>
-      <td data-label="Type">${region.issue_type || "N/A"}</td>
+      <td data-label="Type" class="editable-autocomplete" data-field="issue_type" data-id="${index}" data-type="issuetype">${
+      region.issue_type || '<span class="text-muted">Click to set</span>'
+    }</td>
       <td data-label="Summary" contenteditable="true" data-field="summary" data-id="${index}">${
       region.text || ""
     }</td>
@@ -1877,7 +2076,7 @@ function populateReviewTable() {
                 } else {
                   // Show error feedback
                   e.target.style.backgroundColor = "#f8d7da";
-                  showAlert("Failed to save changes", "danger", 3000);
+                  showToast("Failed to save changes", "danger", 3000);
                   setTimeout(() => {
                     e.target.style.backgroundColor = originalBg;
                   }, 2000);
@@ -1887,7 +2086,7 @@ function populateReviewTable() {
                 console.error("Failed to update issue:", error);
                 e.target.textContent = value;
                 e.target.style.backgroundColor = "#f8d7da";
-                showAlert("Network error - changes not saved", "danger", 3000);
+                showToast("Network error - changes not saved", "danger", 3000);
                 setTimeout(() => {
                   e.target.style.backgroundColor = originalBg;
                 }, 2000);
@@ -1903,6 +2102,133 @@ function populateReviewTable() {
 
   // Attach checkbox event listeners
   attachBulkSelectionHandlers();
+
+  // Update action bar state (Import/Delete All buttons)
+  updateActionBar();
+
+  // Attach autocomplete handlers for Project and Type cells
+  attachAutocompleteHandlers();
+}
+
+function attachAutocompleteHandlers() {
+  document.querySelectorAll(".editable-autocomplete").forEach((cell) => {
+    cell.addEventListener("click", function () {
+      if (this.querySelector("input")) return; // Already editing
+
+      const dataType = this.dataset.type;
+      const currentValue = this.textContent.trim();
+      const cleanValue = currentValue.includes("Click to set")
+        ? ""
+        : currentValue;
+
+      // Create input with datalist for autocomplete
+      const inputId = `autocomplete-${Date.now()}`;
+      const listId = `datalist-${Date.now()}`;
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "form-control form-control-sm";
+      input.value = cleanValue;
+      input.setAttribute("list", listId);
+      input.style.width = "100%";
+
+      const datalist = document.createElement("datalist");
+      datalist.id = listId;
+
+      // Populate datalist based on type
+      if (dataType === "project") {
+        appState.projects?.forEach((project) => {
+          const option = document.createElement("option");
+          option.value = project.key;
+          datalist.appendChild(option);
+        });
+      } else if (dataType === "issuetype") {
+        // Common Jira issue types
+        ["Task", "Story", "Bug", "Epic", "Sub-task"].forEach((type) => {
+          const option = document.createElement("option");
+          option.value = type;
+          datalist.appendChild(option);
+        });
+      }
+
+      this.innerHTML = "";
+      this.appendChild(input);
+      this.appendChild(datalist);
+      input.focus();
+      input.select();
+
+      const saveValue = () => {
+        const newValue = input.value.trim();
+        const index = parseInt(this.dataset.id);
+        const field = this.dataset.field;
+
+        if (newValue === "") {
+          this.innerHTML = '<span class="text-muted">Click to set</span>';
+          return;
+        }
+
+        // Validate project exists
+        if (dataType === "project" && appState.projects) {
+          const validProject = appState.projects.find(
+            (p) => p.key === newValue
+          );
+          if (!validProject) {
+            showToast(
+              `Invalid project: ${newValue}. Please select from the list.`,
+              "warning",
+              4000
+            );
+            this.innerHTML =
+              cleanValue || '<span class="text-muted">Click to set</span>';
+            return;
+          }
+        }
+
+        this.textContent = newValue;
+        appState.ocrRegions[index][field] = newValue;
+
+        // Save to backend
+        if (appState.ocrRegions[index].db_id) {
+          const updateData = { [field]: newValue };
+          fetch(`/api/issues/${appState.ocrRegions[index].db_id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updateData),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.success) {
+                this.style.backgroundColor = "#d1e7dd";
+                setTimeout(() => {
+                  this.style.backgroundColor = "";
+                }, 1500);
+              } else {
+                showToast("Failed to save changes", "danger");
+                this.style.backgroundColor = "#f8d7da";
+                setTimeout(() => {
+                  this.style.backgroundColor = "";
+                }, 2000);
+              }
+            })
+            .catch((error) => {
+              console.error("Failed to update:", error);
+              showToast("Network error - changes not saved", "danger");
+            });
+        }
+      };
+
+      input.addEventListener("blur", saveValue);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          saveValue();
+        } else if (e.key === "Escape") {
+          this.textContent =
+            cleanValue || '<span class="text-muted">Click to set</span>';
+        }
+      });
+    });
+  });
 }
 
 function attachBulkSelectionHandlers() {
@@ -1912,27 +2238,86 @@ function attachBulkSelectionHandlers() {
     selectAllCheckbox.addEventListener("change", (e) => {
       const checkboxes = document.querySelectorAll(".row-checkbox");
       checkboxes.forEach((cb) => (cb.checked = e.target.checked));
-      updateBulkToolbar();
+      updateActionBar();
     });
   }
 
   // Individual row checkboxes
   document.querySelectorAll(".row-checkbox").forEach((cb) => {
-    cb.addEventListener("change", updateBulkToolbar);
+    cb.addEventListener("change", updateActionBar);
   });
 }
 
-function updateBulkToolbar() {
+function updateActionBar() {
   const selectedCheckboxes = document.querySelectorAll(".row-checkbox:checked");
   const count = selectedCheckboxes.length;
-  const toolbar = document.getElementById("bulkToolbar");
-  const badge = document.getElementById("selectedCount");
+  const selectedCountSpan = document.getElementById("selectedCount");
+  const deleteAllBtn = document.getElementById("deleteAllBtn");
+  const importBtn = document.getElementById("startImportBtn");
 
-  if (count > 0) {
-    toolbar.style.display = "block";
-    badge.textContent = `${count} selected`;
+  // Bulk action controls
+  const selectAllBtn = document.getElementById("selectAllBtn");
+  const deselectAllBtn = document.getElementById("deselectAllBtn");
+  const bulkDeleteBtn = document.getElementById("bulkDeleteBtn");
+
+  // Update selected count (always visible, shows 0 when nothing selected)
+  selectedCountSpan.textContent = count;
+
+  // Enable/disable bulk action controls based on selection
+  const hasSelection = count > 0;
+  const totalIssues = appState.ocrRegions ? appState.ocrRegions.length : 0;
+
+  // Select All: enabled when there are issues and not all selected
+  selectAllBtn.disabled = totalIssues === 0 || count === totalIssues;
+  if (selectAllBtn.disabled) {
+    selectAllBtn.setAttribute(
+      "title",
+      totalIssues === 0 ? "No issues" : "All issues already selected"
+    );
   } else {
-    toolbar.style.display = "none";
+    selectAllBtn.removeAttribute("title");
+  }
+
+  // Deselect All: enabled when there are selections
+  deselectAllBtn.disabled = !hasSelection;
+  if (deselectAllBtn.disabled) {
+    deselectAllBtn.setAttribute("title", "No items selected");
+  } else {
+    deselectAllBtn.removeAttribute("title");
+  }
+
+  // Bulk delete: enabled when there are selections
+  bulkDeleteBtn.disabled = !hasSelection;
+
+  if (!hasSelection) {
+    bulkDeleteBtn.setAttribute("title", "Select items to delete");
+  } else {
+    bulkDeleteBtn.removeAttribute("title");
+  }
+
+  // Enable/disable primary action buttons
+  const hasJiraConfig =
+    appState.jiraSettings && appState.jiraSettings.server_url;
+
+  // Delete All: enabled when there are issues
+  if (totalIssues > 0) {
+    deleteAllBtn.disabled = false;
+    deleteAllBtn.removeAttribute("title");
+  } else {
+    deleteAllBtn.disabled = true;
+    deleteAllBtn.setAttribute("title", "No issues to delete");
+  }
+
+  // Import: enabled when there are issues AND Jira is configured
+  if (totalIssues > 0 && hasJiraConfig) {
+    importBtn.disabled = false;
+    importBtn.removeAttribute("title");
+  } else if (totalIssues === 0) {
+    importBtn.disabled = true;
+    importBtn.setAttribute("title", "No issues to import");
+  } else if (!hasJiraConfig) {
+    importBtn.disabled = true;
+    importBtn.setAttribute("title", "Configure Jira settings first");
   }
 
   // Update select all checkbox state
@@ -1999,14 +2384,40 @@ function loadIssuesFromDatabase() {
 }
 
 function deleteIssue(index) {
-  showConfirm("Delete this issue?", "Delete Issue", "Delete", "danger").then(
-    (confirmed) => {
-      if (confirmed) {
-        appState.ocrRegions.splice(index, 1);
-        populateReviewTable();
+  showConfirm(
+    "Delete this issue?",
+    "Delete Issue",
+    "Delete",
+    "danger",
+    "🗑️"
+  ).then((confirmed) => {
+    if (confirmed) {
+      const issue = appState.ocrRegions[index];
+      const dbId = issue.db_id;
+
+      // Delete from frontend state
+      appState.ocrRegions.splice(index, 1);
+      populateReviewTable();
+
+      // Delete from database if it has a db_id
+      if (dbId) {
+        fetch("/api/issues/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [dbId] }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            if (!data.success) {
+              console.error("Failed to delete issue from database");
+            }
+          })
+          .catch((error) => {
+            console.error("Delete error:", error);
+          });
       }
     }
-  );
+  });
 }
 
 function showImagePreview(filename) {
@@ -2027,8 +2438,17 @@ function updateImportSummary() {
 }
 
 function startJiraImport() {
+  // Check if Jira is configured
+  if (!appState.jiraSettings || !appState.jiraSettings.server_url) {
+    showToast(
+      "⚙️ Please configure Jira settings first using the gear icon in the header",
+      "warning"
+    );
+    return;
+  }
+
   if (appState.ocrRegions.length === 0) {
-    showAlert("No issues to import", "warning");
+    showToast("No issues to import", "warning");
     return;
   }
 
@@ -2068,7 +2488,7 @@ function startJiraImport() {
               }, updated ${data.updated || 0}.`;
 
         const alertType = data.failed > 0 ? "warning" : "success";
-        showAlert(message, alertType);
+        showToast(message, alertType);
         showProgress(100, "Import complete!");
 
         // Update regions with issue keys if returned
@@ -2089,22 +2509,22 @@ function startJiraImport() {
             .map((r) => `• ${r.summary}: ${r.error}`)
             .join("\n");
           console.error("Import errors:\n" + errors);
-          showAlert(
+          showToast(
             `${data.failed} issue(s) failed. Check console for details.`,
             "danger",
             10000
           );
         }
       } else {
-        showAlert(`Import failed: ${data.error}`, "danger");
+        showToast(`Import failed: ${data.error}`, "danger");
       }
     })
     .catch((error) => {
-      showAlert(`Import error: ${error.message}`, "danger");
+      showToast(`Import error: ${error.message}`, "danger");
     })
     .finally(() => {
       importBtn.disabled = false;
-      importBtn.textContent = "Start Import";
+      importBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Import';
       hideProgress();
     });
 }
@@ -2114,11 +2534,11 @@ function loadFieldDefaults() {
   const issueType = document.getElementById("fieldDefaultsIssueType").value;
 
   if (!projectKey || !issueType) {
-    showAlert("Please select both project and issue type", "warning");
+    showToast("Please select both project and issue type", "warning");
     return;
   }
 
-  showAlert("Loading fields...", "info", 2000);
+  showToast("Loading fields...", "info", 2000);
 
   fetch(`/api/jira/fields?project_key=${projectKey}&issue_type=${issueType}`)
     .then((response) => response.json())
@@ -2129,7 +2549,7 @@ function loadFieldDefaults() {
         // Load existing defaults for this project/issue type if they exist
         return fetch(`/api/field-defaults/${projectKey}/${issueType}`);
       } else {
-        showAlert(`Failed to load fields: ${data.error}`, "danger");
+        showToast(`Failed to load fields: ${data.error}`, "danger");
         throw new Error(data.error);
       }
     })
@@ -2150,7 +2570,7 @@ function loadFieldDefaults() {
             }
           }
         }
-        showAlert(
+        showToast(
           `Loaded existing configuration for ${issueType}`,
           "info",
           3000
@@ -2161,7 +2581,7 @@ function loadFieldDefaults() {
       setButtonState("#cancelEditBtn", true);
     })
     .catch((error) => {
-      showAlert(`Error loading fields: ${error.message}`, "danger");
+      showToast(`Error loading fields: ${error.message}`, "danger");
     });
 }
 
@@ -2170,7 +2590,7 @@ function saveCurrentFieldDefaults() {
   const issueType = document.getElementById("fieldDefaultsIssueType").value;
 
   if (!projectKey || !issueType) {
-    showAlert("Please select both project and issue type", "warning");
+    showToast("Please select both project and issue type", "warning");
     return;
   }
 
