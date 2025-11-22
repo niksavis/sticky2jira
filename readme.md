@@ -8,7 +8,7 @@ Browser-based local application that extracts text from sticky note images using
 ## Features
 
 - **100% Local Processing** - No cloud APIs, all OCR processing happens on your machine using PaddleOCR (pure Python)
-- **Color-Based Detection** - Automatically detects yellow, pink, blue, green, and orange sticky notes
+- **11-Color Detection** - Automatically detects red, orange, yellow, lime, green, cyan, blue, violet, pink, gray, and black sticky notes
 - **Spatial Linking** - Links description stickies to nearby summary stickies
 - **Jira Integration** - Creates new issues or updates existing ones (prevents duplicates)
 - **Interactive UI** - Step-by-step wizard interface with real-time progress
@@ -98,13 +98,21 @@ DEFAULT_PROXIMITY = 100     # Linking threshold (pixels)
 
 ### OCR Color Ranges
 
-Modify `services/ocr_service.py` to add custom sticky note colors:
+The application supports 11 colors based on HSV analysis. Modify `services/ocr_service.py` to adjust ranges:
 
 ```python
 OCR_COLOR_RANGES = {
-    'yellow': (np.array([20, 100, 100]), np.array([30, 255, 255])),
-    'pink': (np.array([140, 50, 50]), np.array([170, 255, 255])),
-    # Add your custom colors here
+    'red': (np.array([0, 60, 200]), np.array([8, 255, 255])),      # H=0-8
+    'orange': (np.array([9, 80, 200]), np.array([22, 255, 255])),  # H=9-22
+    'yellow': (np.array([23, 60, 200]), np.array([37, 255, 255])), # H=23-37
+    'lime': (np.array([38, 60, 180]), np.array([65, 255, 255])),   # H=38-65 (yellow-green)
+    'green': (np.array([66, 60, 180]), np.array([84, 255, 255])),  # H=66-84
+    'cyan': (np.array([85, 50, 200]), np.array([100, 255, 255])),  # H=85-100 (teal)
+    'blue': (np.array([101, 50, 200]), np.array([117, 255, 255])), # H=101-117
+    'violet': (np.array([118, 50, 200]), np.array([154, 255, 255])), # H=118-154
+    'pink': (np.array([155, 30, 200]), np.array([180, 255, 255])), # H=155-180
+    'gray': (np.array([0, 0, 180]), np.array([180, 30, 255])),     # Low saturation
+    'black': (np.array([0, 0, 0]), np.array([180, 255, 100])),     # Low value
 }
 ```
 
@@ -189,5 +197,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-**Version:** 0.1.0-alpha (Phase 1 MVP - In Development)  
-**Last Updated:** November 21, 2025
+**Status:** Beta  
+**Last Updated:** November 22, 2025

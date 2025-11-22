@@ -690,10 +690,11 @@ function renderOCRResults() {
 
   const colorBreakdown = document.getElementById("colorBreakdown");
   colorBreakdown.innerHTML = Object.entries(colorCounts)
-    .map(
-      ([hex, count]) =>
-        `<span class="badge" style="background-color: ${hex}; color: white;">${hex}: ${count}</span>`
-    )
+    .map(([hex, count]) => {
+      const region = appState.ocrRegions.find((r) => r.color_hex === hex);
+      const colorName = region ? region.color_name : "Unknown";
+      return `<span class="badge" style="background-color: ${hex}; color: white;">${colorName}: ${count}</span>`;
+    })
     .join("");
 
   summary.style.display = "block";

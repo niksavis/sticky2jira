@@ -14,10 +14,16 @@ logger = logging.getLogger(__name__)
 
 # Initialize PaddleOCR (runs on CPU by default, no external binaries needed)
 # use_textline_orientation=True enables text orientation detection
+# text_det_unclip_ratio=2.5 expands detected text boxes to avoid edge clipping (default: 1.5)
+# Higher unclip_ratio helps capture text at image edges that might be partially cropped
 # lang='en' for English, can be changed to other languages
 try:
-    ocr_engine = PaddleOCR(use_textline_orientation=True, lang="en")
-    logger.info("PaddleOCR initialized successfully")
+    ocr_engine = PaddleOCR(
+        use_textline_orientation=True,
+        lang="en",
+        text_det_unclip_ratio=2.5,  # Expanded from default 1.5 to reduce edge clipping
+    )
+    logger.info("PaddleOCR initialized successfully with text_det_unclip_ratio=2.5")
 except Exception as e:
     logger.error(f"Failed to initialize PaddleOCR: {e}")
     ocr_engine = None
@@ -29,52 +35,53 @@ except Exception as e:
 
 # HSV color ranges for sticky note colors
 # Format: (lower_bound, upper_bound) in HSV color space
-# VERY PERMISSIVE ranges to catch all pastel/bright sticky notes
+# Tuned based on actual sticky note HSV analysis from test images
+# Categories: red, orange, yellow, lime, green, cyan, blue, violet, pink, gray, black
 OCR_COLOR_RANGES = {
-    "pink": (
-        np.array([150, 15, 100]),
-        np.array([180, 255, 255]),
-    ),  # Pink/magenta sticky notes
     "red": (
-        np.array([0, 15, 100]),
-        np.array([10, 255, 255]),
-    ),  # Red sticky notes
+        np.array([0, 60, 200]),
+        np.array([8, 255, 255]),
+    ),  # Red: H=0-8, high saturation
     "orange": (
-        np.array([10, 15, 100]),
-        np.array([25, 255, 255]),
-    ),  # Orange sticky notes
+        np.array([9, 80, 200]),
+        np.array([22, 255, 255]),
+    ),  # Orange: H=9-22
     "yellow": (
-        np.array([25, 15, 100]),
-        np.array([35, 255, 255]),
-    ),  # Yellow sticky notes
+        np.array([23, 60, 200]),
+        np.array([37, 255, 255]),
+    ),  # Yellow: H=23-37
     "lime": (
-        np.array([35, 15, 100]),
-        np.array([75, 255, 255]),
-    ),  # Light green/lime sticky notes
+        np.array([38, 60, 180]),
+        np.array([65, 255, 255]),
+    ),  # Lime: H=38-65 (yellow-green)
     "green": (
-        np.array([75, 15, 100]),
-        np.array([90, 255, 255]),
-    ),  # Green sticky notes
+        np.array([66, 60, 180]),
+        np.array([84, 255, 255]),
+    ),  # Green: H=66-84 (true green)
     "cyan": (
-        np.array([90, 15, 100]),
+        np.array([85, 50, 200]),
         np.array([100, 255, 255]),
-    ),  # Cyan/turquoise sticky notes
+    ),  # Cyan: H=85-100 (blue-green/teal)
     "blue": (
-        np.array([100, 15, 100]),
-        np.array([130, 255, 255]),
-    ),  # Blue sticky notes
-    "purple": (
-        np.array([130, 15, 100]),
-        np.array([150, 255, 255]),
-    ),  # Purple/violet sticky notes
-    "white": (
+        np.array([101, 50, 200]),
+        np.array([117, 255, 255]),
+    ),  # Blue: H=101-117 (true blue)
+    "violet": (
+        np.array([118, 50, 200]),
+        np.array([154, 255, 255]),
+    ),  # Violet: H=118-154 (purple-blue to violet)
+    "pink": (
+        np.array([155, 30, 200]),
+        np.array([180, 255, 255]),
+    ),  # Pink: H=155-180 (magenta to pink)
+    "gray": (
         np.array([0, 0, 180]),
         np.array([180, 30, 255]),
-    ),  # White/very light sticky notes
-    "gray": (
-        np.array([0, 0, 100]),
-        np.array([180, 30, 180]),
-    ),  # Light gray sticky notes
+    ),  # Gray: very low saturation, high value
+    "black": (
+        np.array([0, 0, 0]),
+        np.array([180, 255, 100]),
+    ),  # Black: very low value
 }
 
 # Default processing parameters
@@ -135,147 +142,105 @@ class OCRService:
         self, image_path: str, progress_callback: Optional[Callable] = None
     ) -> List[Dict[str, Any]]:
         """
-        Process sticky note image and extract text regions.
+        Process sticky note image using improved text-first clustering.
 
-        Args:
-            image_path: Path to input image
-            progress_callback: Callback(current, total, status, message, preview_url)
+        Strategy:
+        1. Run global OCR to detect all text lines
+        2. Cluster text lines with conservative distance threshold (prevents merging separate stickies)
+        3. Determine color for each cluster
+        4. Remove duplicate/overlapping regions
 
-        Returns:
-            List of region dictionaries
+        This approach leverages accurate text detection while preventing text from different stickies being merged.
         """
-        logger.info(f"Starting OCR processing: {image_path}")
+        logger.info(f"Starting improved OCR processing: {image_path}")
 
         # Load image
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"Failed to load image: {image_path}")
 
-        # ROBUST APPROACH:
-        # 1. Detect sticky note boundaries using color segmentation
-        # 2. For each sticky note, extract text using PaddleOCR
-        # This prevents mixing text from different sticky notes
-
         if ocr_engine is None:
             raise RuntimeError("PaddleOCR not initialized")
 
-        # Convert to HSV for color-based sticky note detection with smoothing
-        hsv = self._prepare_hsv_for_detection(image)
-
-        # Run a single global text detection pass for alignment/validation
+        # Step 1: Run global text detection
         global_text_boxes = self._run_global_text_detection(image)
+        logger.info(f"Detected {len(global_text_boxes)} text lines globally")
 
-        # Detect sticky note regions using color segmentation first
-        sticky_note_regions = self._detect_color_regions(image, hsv)
-        logger.info(
-            f"Detected {len(sticky_note_regions)} sticky note regions via color segmentation"
-        )
-
-        # Run Paddle-based fallback when color detection looks weak
-        fallback_regions: List[Dict[str, Any]] = []
-        if self._should_use_paddle_fallback(sticky_note_regions, image.shape):
-            fallback_regions = self._detect_regions_with_paddle(
-                image, global_text_boxes
-            )
-            if fallback_regions:
-                sticky_note_regions.extend(fallback_regions)
-                logger.info(
-                    f"Fallback detection added {len(fallback_regions)} PaddleOCR-derived regions"
-                )
-            else:
-                logger.info("Fallback detection ran but found no additional regions")
-
-        adaptive_regions = self._detect_adaptive_color_regions(
-            image, hsv, sticky_note_regions
-        )
-        if adaptive_regions:
-            sticky_note_regions.extend(adaptive_regions)
-            logger.info(
-                f"Adaptive color clustering added {len(adaptive_regions)} supplemental regions"
-            )
-
-        sticky_note_regions = self._validate_regions_with_text(
-            sticky_note_regions, global_text_boxes, image.shape
-        )
-        sticky_note_regions = self._merge_candidate_regions(
-            sticky_note_regions, iou_threshold=0.65, distance_threshold=35.0
-        )
-
-        if not sticky_note_regions:
-            logger.warning("No sticky note candidates detected after validation")
+        if not global_text_boxes:
+            logger.warning("No text detected in image")
             return []
 
-        # Now extract text from each sticky note region
+        # Step 2: Cluster text with moderate threshold
+        # Use 45px threshold as baseline - balances keeping lines together vs separating stickies
+        sticky_clusters = self._cluster_text_boxes_robust(
+            global_text_boxes, distance_threshold=45.0
+        )
+        logger.info(f"Initial clustering (45px): {len(sticky_clusters)} candidates")
+
+        # Filter out trivial single-character clusters (likely noise or isolated symbols)
+        sticky_clusters = [
+            c for c in sticky_clusters if self._is_substantial_cluster(c)
+        ]
+        logger.info(
+            f"After filtering trivial clusters: {len(sticky_clusters)} sticky candidates"
+        )
+
+        # Step 3: Process each cluster
         regions = []
-        region_id = 0
-        total_regions = len(sticky_note_regions)
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        total_regions = len(sticky_clusters)
 
-        for sticky in sticky_note_regions:
-            x, y, w, h = sticky["bbox"]
+        for i, cluster in enumerate(sticky_clusters):
+            # Calculate bounding box of the cluster
+            text_bbox = cluster["bbox"]
 
-            # Extract ROI
-            roi = image[y : y + h, x : x + w]
-
-            # Get dominant color
-            color_hex = self._get_dominant_color(roi)
-
-            pre_text = sticky.get("pre_text")
-            combined_text = pre_text.strip() if isinstance(pre_text, str) else ""
-            avg_conf = self._safe_float(sticky.get("pre_confidence"))
-
-            if not combined_text:
-                composed_text, composed_conf = self._compose_text_from_boxes(
-                    (x, y, w, h), global_text_boxes
-                )
-                if composed_text:
-                    combined_text = composed_text
-                    avg_conf = composed_conf
-
-            if not combined_text:
-                combined_text, avg_conf = self._extract_text(roi)
-
-            if not combined_text:
-                logger.debug(
-                    f"No text in {sticky.get('color_name', 'unknown')} sticky at ({x},{y},{w}x{h})"
-                )
-                continue
-
-            logger.info(
-                f"Region {region_id} ({sticky['color_name']}): '{combined_text[:60]}...' conf={avg_conf:.1f}%"
+            # Expand to capture background color (15% padding)
+            expanded_bbox = self._expand_bbox(
+                text_bbox, image.shape[1], image.shape[0], pad_ratio=0.15
             )
 
-            # Create region
+            # Extract text content
+            combined_text = self._join_cluster_text(cluster["boxes"])
+            avg_conf = self._calculate_cluster_confidence(cluster["boxes"])
+
+            # Determine color
+            color_hex, color_name = self._determine_region_color(
+                image, hsv_image, expanded_bbox, cluster["boxes"]
+            )
+
             region = StickyRegion(
-                id=region_id,
+                id=i,
                 color_hex=color_hex,
-                color_name=sticky["color_name"],
+                color_name=color_name,
                 text=combined_text,
-                bbox=(x, y, w, h),
+                bbox=expanded_bbox,
                 confidence=avg_conf,
                 linked_to=[],
             )
             regions.append(region)
-            region_id += 1
 
-            # Report progress
+            logger.info(
+                f"Region {i} ({color_name}): '{combined_text[:40]}...' conf={avg_conf:.1f}%"
+            )
+
             if progress_callback:
                 progress_callback(
-                    current=region_id,
+                    current=i + 1,
                     total=total_regions,
                     status="processing",
-                    message=f"Extracted {sticky['color_name']} sticky note",
+                    message=f"Processed {color_name} sticky note",
                 )
 
-        logger.info(f"Detection complete: found {len(regions)} sticky notes")
+        # Step 4: Remove duplicates and merge fragments
+        # Use aggressive thresholds: IoU=0.15 (15% overlap), proximity=40px for fragments
+        regions = self._remove_duplicates_and_merge_fragments(
+            regions, iou_threshold=0.15, proximity_threshold=40
+        )
+        logger.info(
+            f"After duplicate removal and fragment merging: {len(regions)} regions"
+        )
 
-        # Remove duplicate/overlapping regions
-        regions = self._remove_duplicates(regions)
-        logger.info(f"After deduplication: {len(regions)} unique regions")
-
-        # Consolidate similar colors to prevent duplicate color mappings
-        regions = self._consolidate_colors(regions)
-
-        # Spatial linking (find description stickies near summary stickies)
+        # Step 5: Spatial linking (find description stickies near summary stickies)
         self._link_regions(regions)
 
         # Convert to dictionary format
@@ -283,6 +248,329 @@ class OCRService:
 
         logger.info(f"OCR processing complete: {len(result)} regions extracted")
         return result
+
+    def _preprocess_image_for_detection(self, image: np.ndarray) -> np.ndarray:
+        """
+        Preprocess image to normalize color shades while preserving edges.
+        Uses bilateral filter which smooths colors but keeps sticky boundaries sharp.
+        """
+        # Bilateral filter: smooths similar colors, preserves edges
+        # d=9: diameter of pixel neighborhood
+        # sigmaColor=75: filter sigma in color space (higher = more aggressive color smoothing)
+        # sigmaSpace=75: filter sigma in coordinate space
+        filtered = cv2.bilateralFilter(image, d=9, sigmaColor=75, sigmaSpace=75)
+
+        # Additional Gaussian blur to further smooth color variations
+        smoothed = cv2.GaussianBlur(filtered, (5, 5), 0)
+
+        logger.info("Applied bilateral + Gaussian filtering for color normalization")
+        return smoothed
+
+    def _detect_sticky_regions_by_color(
+        self, preprocessed_image: np.ndarray, original_image: np.ndarray
+    ) -> List[Dict[str, Any]]:
+        """
+        Detect sticky note regions using color segmentation and connected components.
+        Returns list of region dictionaries with bbox and color info.
+        """
+        hsv = cv2.cvtColor(preprocessed_image, cv2.COLOR_BGR2HSV)
+        height, width = hsv.shape[:2]
+
+        regions = []
+        region_id = 0
+
+        # Use more aggressive morphology to merge nearby regions of same color
+        kernel_size = 15
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+
+        # Iterate through each sticky color
+        for color_name, (lower, upper) in OCR_COLOR_RANGES.items():
+            # Skip gray and black - they often match background or text
+            if color_name in ["gray", "black"]:
+                continue
+
+            # Create color mask
+            lower_bound = lower.copy()
+            upper_bound = upper.copy()
+
+            # Use more permissive hue range
+            hue_tolerance = max(15, self.hsv_tolerance)
+            lower_bound[0] = max(0, lower_bound[0] - hue_tolerance)
+            upper_bound[0] = min(180, upper_bound[0] + hue_tolerance)
+
+            # Also relax saturation to catch pastel stickies
+            lower_bound[1] = max(0, lower_bound[1] - 10)
+
+            mask = cv2.inRange(hsv, lower_bound, upper_bound)
+
+            # Aggressive morphological closing to merge nearby sticky pixels
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=4)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+            # Find connected components
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+                mask, connectivity=8
+            )
+
+            # Process each connected component (skip background label 0)
+            for label_idx in range(1, num_labels):
+                # Get component stats
+                x = stats[label_idx, cv2.CC_STAT_LEFT]
+                y = stats[label_idx, cv2.CC_STAT_TOP]
+                w = stats[label_idx, cv2.CC_STAT_WIDTH]
+                h = stats[label_idx, cv2.CC_STAT_HEIGHT]
+                area = stats[label_idx, cv2.CC_STAT_AREA]
+
+                # Use stricter size filtering - sticky notes should be reasonably large
+                min_area = max(self.min_size, 2000)  # At least 45x45 pixels
+                max_area = min(self.max_size, 30000)  # At most ~170x170 pixels
+
+                if area < min_area or area > max_area:
+                    continue
+
+                # Filter by aspect ratio (stickies are roughly square)
+                aspect_ratio = w / h if h > 0 else 0
+                if aspect_ratio < 0.3 or aspect_ratio > 3.5:
+                    continue
+
+                # Get representative color from original image
+                roi = original_image[y : y + h, x : x + w]
+                if roi.size > 0:
+                    color_hex = self._get_dominant_color(roi)
+                else:
+                    color_hex = self._get_color_hex(color_name)
+
+                regions.append(
+                    {
+                        "id": region_id,
+                        "bbox": (x, y, w, h),
+                        "color_name": color_name,
+                        "color_hex": color_hex,
+                        "area": area,
+                    }
+                )
+
+                region_id += 1
+                logger.debug(
+                    f"Found {color_name} sticky at ({x},{y}) size {w}x{h} area={area}"
+                )
+
+        # Merge overlapping regions
+        regions = self._merge_overlapping_regions(regions, iou_threshold=0.5)
+
+        logger.info(
+            f"Color segmentation found {len(regions)} sticky regions after merging"
+        )
+        return regions
+
+    def _merge_overlapping_regions(
+        self, regions: List[Dict[str, Any]], iou_threshold: float = 0.5
+    ) -> List[Dict[str, Any]]:
+        """Merge regions that significantly overlap."""
+        if len(regions) <= 1:
+            return regions
+
+        # Sort by area (largest first)
+        sorted_regions = sorted(regions, key=lambda r: r["area"], reverse=True)
+
+        merged = []
+        skip_indices = set()
+
+        for i, region_a in enumerate(sorted_regions):
+            if i in skip_indices:
+                continue
+
+            # Check if this region overlaps significantly with any larger region
+            merged_region = region_a.copy()
+
+            for j, region_b in enumerate(sorted_regions):
+                if i == j or j in skip_indices:
+                    continue
+
+                iou = self._calculate_iou(region_a["bbox"], region_b["bbox"])
+
+                if iou >= iou_threshold:
+                    # Merge bbox
+                    bbox_a = region_a["bbox"]
+                    bbox_b = region_b["bbox"]
+                    merged_bbox = self._merge_bboxes(bbox_a, bbox_b)
+                    merged_region["bbox"] = merged_bbox
+                    merged_region["area"] = merged_bbox[2] * merged_bbox[3]
+                    skip_indices.add(j)
+
+            merged.append(merged_region)
+
+        # Re-assign IDs
+        for i, region in enumerate(merged):
+            region["id"] = i
+
+        logger.info(f"Merged overlapping regions: {len(regions)} -> {len(merged)}")
+        return merged
+
+    def _assign_text_to_regions(
+        self,
+        sticky_regions: List[Dict[str, Any]],
+        text_boxes: List[Dict[str, Any]],
+        image: np.ndarray,
+    ) -> List[StickyRegion]:
+        """
+        Assign each text line to its containing sticky region.
+        If text doesn't fall in any region, create a new region for it.
+        """
+        # Handle new OCRResult format from PaddleOCR
+        if text_boxes and len(text_boxes) > 0:
+            # Check if it's the new OCRResult object
+            first_box = text_boxes[0]
+            if isinstance(first_box, dict) and "rec_texts" in first_box:
+                # It's an OCRResult - extract the data
+                ocr_result = first_box
+                text_boxes = []
+
+                rec_texts = ocr_result.get("rec_texts", [])
+                rec_scores = ocr_result.get("rec_scores", [])
+                rec_polys = ocr_result.get("rec_polys", [])
+
+                for i in range(len(rec_texts)):
+                    poly = rec_polys[i] if i < len(rec_polys) else None
+                    if poly is None:
+                        continue
+
+                    bbox = self._poly_to_bbox(poly)
+                    if not bbox:
+                        continue
+
+                    text_boxes.append(
+                        {
+                            "bbox": bbox,
+                            "text": rec_texts[i],
+                            "score": rec_scores[i] if i < len(rec_scores) else 0.9,
+                        }
+                    )
+
+        # Create assignment map
+        region_texts = {region["id"]: [] for region in sticky_regions}
+        unassigned_texts = []
+
+        # Assign each text box to overlapping region
+        for text_box in text_boxes:
+            text_bbox = text_box["bbox"]
+            text_center = (
+                text_bbox[0] + text_bbox[2] / 2,
+                text_bbox[1] + text_bbox[3] / 2,
+            )
+
+            assigned = False
+            best_overlap = 0
+            best_region_id = None
+
+            # Find region with best overlap
+            for region in sticky_regions:
+                region_bbox = region["bbox"]
+
+                # Check if text center is inside region
+                if (
+                    region_bbox[0] <= text_center[0] <= region_bbox[0] + region_bbox[2]
+                    and region_bbox[1]
+                    <= text_center[1]
+                    <= region_bbox[1] + region_bbox[3]
+                ):
+                    # Calculate overlap area
+                    overlap = self._calculate_iou(text_bbox, region_bbox)
+
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_region_id = region["id"]
+                        assigned = True
+
+            if assigned and best_region_id is not None:
+                region_texts[best_region_id].append(text_box)
+            else:
+                unassigned_texts.append(text_box)
+
+        # Create StickyRegion objects
+        result_regions = []
+
+        for region in sticky_regions:
+            region_id = region["id"]
+            assigned_boxes = region_texts[region_id]
+
+            if not assigned_boxes:
+                # Skip empty regions
+                logger.debug(f"Region {region_id} has no text, skipping")
+                continue
+
+            # Sort text boxes by position (top to bottom, left to right)
+            assigned_boxes.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+
+            # Combine text
+            combined_text = " ".join([box["text"] for box in assigned_boxes])
+
+            # Calculate average confidence
+            scores = [box["score"] for box in assigned_boxes]
+            avg_confidence = sum(scores) / len(scores) if scores else 0.0
+            if avg_confidence <= 1.0:
+                avg_confidence *= 100
+
+            # Create sticky region
+            sticky = StickyRegion(
+                id=len(result_regions),
+                color_hex=region["color_hex"],
+                color_name=region["color_name"],
+                text=combined_text,
+                bbox=region["bbox"],
+                confidence=avg_confidence,
+                linked_to=[],
+            )
+
+            result_regions.append(sticky)
+            logger.info(
+                f"Region {sticky.id} ({sticky.color_name}): '{combined_text[:50]}' conf={avg_confidence:.1f}%"
+            )
+
+        # Handle unassigned text (assign to nearest region or drop if too far)
+        if unassigned_texts:
+            logger.info(
+                f"Attempting to reassign {len(unassigned_texts)} unassigned text lines"
+            )
+
+            for text_box in unassigned_texts:
+                text_bbox = text_box["bbox"]
+                text_center = (
+                    text_bbox[0] + text_bbox[2] / 2,
+                    text_bbox[1] + text_bbox[3] / 2,
+                )
+
+                # Find nearest region
+                min_dist = float("inf")
+                nearest_region = None
+
+                for sticky in result_regions:
+                    region_center = (
+                        sticky.bbox[0] + sticky.bbox[2] / 2,
+                        sticky.bbox[1] + sticky.bbox[3] / 2,
+                    )
+                    dist = np.sqrt(
+                        (text_center[0] - region_center[0]) ** 2
+                        + (text_center[1] - region_center[1]) ** 2
+                    )
+
+                    if dist < min_dist:
+                        min_dist = dist
+                        nearest_region = sticky
+
+                # If text is reasonably close to a region (within 50px), assign it
+                if nearest_region and min_dist < 50:
+                    # Append text to nearest region
+                    nearest_region.text = f"{nearest_region.text} {text_box['text']}"
+                    logger.debug(
+                        f"Assigned orphan text '{text_box['text'][:30]}' to region {nearest_region.id}"
+                    )
+                else:
+                    logger.debug(
+                        f"Dropping orphan text '{text_box['text'][:30]}' (too far from any region)"
+                    )
+
+        return result_regions
 
     def _detect_color_regions(
         self, image: np.ndarray, hsv: np.ndarray
@@ -365,8 +653,8 @@ class OCRService:
     def _prepare_hsv_for_detection(self, image: np.ndarray) -> np.ndarray:
         """Apply smoothing and contrast normalization before HSV conversion."""
 
-        # Bilateral filter preserves edges while smoothing gradients
-        blurred = cv2.bilateralFilter(image, d=9, sigmaColor=60, sigmaSpace=60)
+        # Gaussian blur is faster than bilateral and sufficient for color segmentation
+        blurred = cv2.GaussianBlur(image, (9, 9), 0)
 
         # Normalize luminance to reduce shading differences
         lab = cv2.cvtColor(blurred, cv2.COLOR_BGR2LAB)
@@ -376,7 +664,7 @@ class OCRService:
         lab_eq = cv2.merge((l_eq, a_chan, b_chan))
         balanced_bgr = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
 
-        # Soft blur to further smooth pastel transitions
+        # Additional soft blur to further smooth pastel transitions
         balanced_bgr = cv2.GaussianBlur(balanced_bgr, (5, 5), 0)
 
         return cv2.cvtColor(balanced_bgr, cv2.COLOR_BGR2HSV)
@@ -398,7 +686,36 @@ class OCRService:
             return []
 
         page_result = result[0]
-        return self._extract_text_boxes_from_result(page_result)
+
+        # Handle new OCRResult object format
+        if hasattr(page_result, "keys") and "rec_texts" in page_result:
+            # New format: OCRResult dictionary
+            text_boxes = []
+            rec_texts = page_result.get("rec_texts", [])
+            rec_scores = page_result.get("rec_scores", [])
+            rec_polys = page_result.get("rec_polys", [])
+
+            for i in range(len(rec_texts)):
+                poly = rec_polys[i] if i < len(rec_polys) else None
+                if poly is None:
+                    continue
+
+                bbox = self._poly_to_bbox(poly)
+                if not bbox:
+                    continue
+
+                text_boxes.append(
+                    {
+                        "bbox": bbox,
+                        "text": rec_texts[i],
+                        "score": rec_scores[i] if i < len(rec_scores) else 0.9,
+                    }
+                )
+
+            return text_boxes
+        else:
+            # Old format: list of [polygon, (text, score)]
+            return self._extract_text_boxes_from_result(page_result)
 
     def _detect_adaptive_color_regions(
         self, image: np.ndarray, hsv: np.ndarray, seed_regions: List[Dict[str, Any]]
@@ -518,8 +835,9 @@ class OCRService:
     def _merge_candidate_regions(
         self,
         regions: List[Dict[str, Any]],
-        iou_threshold: float = 0.55,
-        distance_threshold: float = 45.0,
+        iou_threshold: float = 0.6,
+        distance_threshold: float = 20.0,
+        same_color_distance_threshold: float = 45.0,
     ) -> List[Dict[str, Any]]:
         """Merge overlapping/neighboring candidate regions to avoid duplicates."""
 
@@ -562,7 +880,28 @@ class OCRService:
                 iou = self._calculate_iou(bbox, existing_tuple)
                 distance = self._center_distance(bbox, existing_tuple)
 
-                if iou >= iou_threshold or distance <= distance_threshold:
+                # Determine applicable distance threshold based on color similarity
+                current_dist_threshold = distance_threshold
+                if existing.get("color_name") == region.get("color_name"):
+                    current_dist_threshold = same_color_distance_threshold
+
+                should_merge = False
+                if iou >= iou_threshold:
+                    should_merge = True
+                elif distance <= current_dist_threshold:
+                    # Check if merging would create a massive empty space (bridging two distinct stickies)
+                    merged_bbox = self._merge_bboxes(existing_tuple, bbox)
+                    merged_area = merged_bbox[2] * merged_bbox[3]
+                    sum_area = (existing_tuple[2] * existing_tuple[3]) + (
+                        bbox[2] * bbox[3]
+                    )
+
+                    # If merged area is significantly larger than sum of parts, it implies a large gap
+                    # Only allow if they are VERY close (e.g. split by a thin line)
+                    if merged_area <= sum_area * 1.3:
+                        should_merge = True
+
+                if should_merge:
                     merged_bbox = self._merge_bboxes(existing_tuple, bbox)
                     existing["bbox"] = merged_bbox
                     existing["area"] = existing["bbox"][2] * existing["bbox"][3]
@@ -1304,7 +1643,7 @@ class OCRService:
                 consolidated_regions.append(region)
 
         logger.info(
-            f"Consolidated {len(regions)} regions into {len(color_groups)} color groups"
+            f"Consolidated {len(regions)} into {len(color_groups)} color groups"
         )
         return consolidated_regions
 
@@ -1371,6 +1710,112 @@ class OCRService:
         logger.info(f"Removed {len(to_remove)} duplicate regions out of {len(regions)}")
         return unique_regions
 
+    def _remove_duplicates_and_merge_fragments(
+        self,
+        regions: List[StickyRegion],
+        iou_threshold: float = 0.2,
+        proximity_threshold: int = 30,
+    ) -> List[StickyRegion]:
+        """
+        Enhanced duplicate removal that also merges small fragment regions into nearby larger regions.
+
+        Strategy:
+        1. Remove overlapping duplicates (IoU-based)
+        2. Merge small single-line fragments that are very close to larger regions
+
+        This reduces false positives from text clustering while preserving distinct stickies.
+        """
+        if len(regions) <= 1:
+            return regions
+
+        # Step 1: Standard duplicate removal by IoU
+        regions = self._remove_duplicates(regions, iou_threshold=iou_threshold)
+
+        # Step 2: Identify fragments (regions with very little text, likely split from larger sticky)
+        # and merge them into nearby larger regions
+        fragments = []
+        substantial_regions = []
+
+        for region in regions:
+            # Consider a region a "fragment" if it has <= 30 characters (very short text)
+            # Sticky notes typically have multiple words or sentences
+            if len(region.text.strip()) <= 30:
+                fragments.append(region)
+            else:
+                substantial_regions.append(region)
+
+        logger.info(
+            f"Identified {len(fragments)} fragment regions and {len(substantial_regions)} substantial regions"
+        )
+
+        # Merge fragments into nearest substantial region if close enough
+        merged_count = 0
+        for fragment in fragments:
+            frag_center = (
+                fragment.bbox[0] + fragment.bbox[2] / 2,
+                fragment.bbox[1] + fragment.bbox[3] / 2,
+            )
+
+            # Find nearest substantial region
+            min_dist = float("inf")
+            nearest_region = None
+
+            for sub_region in substantial_regions:
+                sub_center = (
+                    sub_region.bbox[0] + sub_region.bbox[2] / 2,
+                    sub_region.bbox[1] + sub_region.bbox[3] / 2,
+                )
+                dist = np.sqrt(
+                    (frag_center[0] - sub_center[0]) ** 2
+                    + (frag_center[1] - sub_center[1]) ** 2
+                )
+
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_region = sub_region
+
+            # Merge if reasonably close (60px threshold - about half a sticky note)
+            if nearest_region and min_dist < 60:
+                # Append fragment text to nearest region
+                nearest_region.text = f"{nearest_region.text} {fragment.text}".strip()
+                merged_count += 1
+                logger.debug(
+                    f"Merged fragment '{fragment.text}' into region {nearest_region.id}"
+                )
+            else:
+                # Keep fragment as standalone region if not close to anything
+                substantial_regions.append(fragment)
+
+        logger.info(f"Merged {merged_count} fragments into nearby regions")
+
+        # Re-assign sequential IDs
+        for new_id, region in enumerate(substantial_regions):
+            region.id = new_id
+
+        return substantial_regions
+
+    def _is_substantial_cluster(self, cluster: Dict[str, Any]) -> bool:
+        """
+        Determine if a text cluster represents a substantial sticky note.
+        Filters out single-char noise and trivial fragments.
+        """
+        boxes = cluster.get("boxes", [])
+        if not boxes:
+            return False
+
+        # Get all text from cluster
+        all_text = " ".join([b.get("text", "") for b in boxes]).strip()
+
+        # Filter: Must have at least 3 characters of actual content
+        if len(all_text) < 3:
+            return False
+
+        # Filter: Must have at least one word with 2+ characters
+        words = all_text.split()
+        has_real_word = any(len(w) >= 2 for w in words)
+
+        return has_real_word
+
     def _link_regions(self, regions: List[StickyRegion]) -> None:
         """
         Link regions based on spatial proximity.
@@ -1419,6 +1864,205 @@ class OCRService:
             "confidence": round(region.confidence, 2),
             "linked_to": region.linked_to,
         }
+
+    def _cluster_text_boxes_robust(
+        self,
+        text_boxes: List[Dict[str, Any]],
+        distance_threshold: float = 60.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Cluster text boxes into groups based on spatial proximity.
+        Each cluster represents a potential sticky note.
+        """
+        if not text_boxes:
+            return []
+
+        # Sort boxes by Y then X to help with initial ordering
+        sorted_boxes = sorted(text_boxes, key=lambda b: (b["bbox"][1], b["bbox"][0]))
+
+        clusters: List[Dict[str, Any]] = []
+
+        for box in sorted_boxes:
+            assigned = False
+            box_center = (
+                box["bbox"][0] + box["bbox"][2] / 2,
+                box["bbox"][1] + box["bbox"][3] / 2,
+            )
+
+            # Try to add to existing cluster
+            best_cluster_idx = -1
+            min_dist = float("inf")
+
+            for i, cluster in enumerate(clusters):
+                # Check distance to cluster center or nearest box in cluster
+                # Using nearest box is better for chaining
+                for c_box in cluster["boxes"]:
+                    c_center = (
+                        c_box["bbox"][0] + c_box["bbox"][2] / 2,
+                        c_box["bbox"][1] + c_box["bbox"][3] / 2,
+                    )
+                    dist = np.sqrt(
+                        (box_center[0] - c_center[0]) ** 2
+                        + (box_center[1] - c_center[1]) ** 2
+                    )
+
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_cluster_idx = i
+
+            if min_dist < distance_threshold and best_cluster_idx != -1:
+                clusters[best_cluster_idx]["boxes"].append(box)
+                clusters[best_cluster_idx]["bbox"] = self._merge_bboxes(
+                    clusters[best_cluster_idx]["bbox"], box["bbox"]
+                )
+                assigned = True
+
+            if not assigned:
+                clusters.append({"boxes": [box], "bbox": box["bbox"]})
+
+        return clusters
+
+    def _join_cluster_text(self, boxes: List[Dict[str, Any]]) -> str:
+        """Join text from a cluster of boxes, sorting by line."""
+        if not boxes:
+            return ""
+
+        # Sort by Y (lines), then X (words in line)
+        sorted_boxes = sorted(boxes, key=lambda b: (b["bbox"][1], b["bbox"][0]))
+
+        return " ".join([b["text"] for b in sorted_boxes])
+
+    def _calculate_cluster_confidence(self, boxes: List[Dict[str, Any]]) -> float:
+        if not boxes:
+            return 0.0
+        scores = [float(b.get("score", 0.0)) for b in boxes]
+        avg = sum(scores) / len(scores)
+        return avg * 100 if avg <= 1.0 else avg
+
+    def _determine_region_color(
+        self,
+        image: np.ndarray,
+        hsv_image: np.ndarray,
+        bbox: Tuple[int, int, int, int],
+        text_boxes: List[Dict[str, Any]],
+    ) -> Tuple[str, str]:
+        """
+        Determine the dominant color of a region, ignoring text pixels.
+        Returns (hex_color, color_name).
+        """
+        x, y, w, h = bbox
+
+        # Ensure within bounds
+        x = max(0, x)
+        y = max(0, y)
+        w = min(w, image.shape[1] - x)
+        h = min(h, image.shape[0] - y)
+
+        if w <= 0 or h <= 0:
+            return "#D3D3D3", "gray"
+
+        roi_hsv = hsv_image[y : y + h, x : x + w]
+
+        # Create mask for text boxes to ignore them
+        mask = np.ones((h, w), dtype=np.uint8) * 255
+
+        for box in text_boxes:
+            bx, by, bw, bh = box["bbox"]
+            # Translate to ROI coordinates
+            rx = bx - x
+            ry = by - y
+
+            # Clip to ROI
+            rx = max(0, rx)
+            ry = max(0, ry)
+            rw = min(bw, w - rx)
+            rh = min(bh, h - ry)
+
+            if rw > 0 and rh > 0:
+                cv2.rectangle(mask, (rx, ry), (rx + rw, ry + rh), 0, -1)
+
+        # Calculate median color of non-masked pixels
+        valid_pixels = roi_hsv[mask == 255]
+
+        if len(valid_pixels) < 10:
+            # Fallback to mean of whole ROI if mask covers everything
+            valid_pixels = roi_hsv.reshape(-1, 3)
+
+        if len(valid_pixels) == 0:
+            return "#D3D3D3", "gray"
+
+        median_hsv = np.median(valid_pixels, axis=0)
+
+        # Find closest named color
+        return self._get_closest_color_name(median_hsv)
+
+    def _get_closest_color_name(self, hsv_pixel: np.ndarray) -> Tuple[str, str]:
+        """Map a single HSV pixel to the closest defined sticky color using distance."""
+        h, s, v = hsv_pixel
+
+        # Find all matching ranges
+        matched_names = []
+        for name, (lower, upper) in OCR_COLOR_RANGES.items():
+            if (
+                (lower[0] <= h <= upper[0])
+                and (lower[1] <= s <= upper[1])
+                and (lower[2] <= v <= upper[2])
+            ):
+                matched_names.append(name)
+
+        if matched_names:
+            # Priority: specific colors > gray/black
+            for name in matched_names:
+                if name not in ["gray", "black"]:
+                    return self._get_color_hex(name), name
+            return self._get_color_hex(matched_names[0]), matched_names[0]
+
+        # No exact match - find closest by Hue distance (since H is circular)
+        # Only consider colors with sufficient saturation to avoid gray/black
+        if s < 25:  # Low saturation - likely gray
+            if v > 200:
+                return self._get_color_hex("gray"), "gray"
+            elif v < 100:
+                return self._get_color_hex("black"), "black"
+            else:
+                return self._get_color_hex("gray"), "gray"
+
+        # Find closest by hue for saturated colors
+        min_dist = 180
+        closest_name = "gray"
+
+        for name, (lower, upper) in OCR_COLOR_RANGES.items():
+            if name in ["gray", "black"]:
+                continue
+
+            # Calculate center hue of range
+            center_h = (lower[0] + upper[0]) / 2
+
+            # Circular distance on hue wheel
+            dist = min(abs(h - center_h), 180 - abs(h - center_h))
+
+            if dist < min_dist:
+                min_dist = dist
+                closest_name = name
+
+        return self._get_color_hex(closest_name), closest_name
+
+    def _get_color_hex(self, color_name: str) -> str:
+        """Map color names to hex codes for UI display."""
+        colors = {
+            "red": "#FF6B6B",  # Soft red
+            "orange": "#FFA500",  # Orange
+            "yellow": "#FFD93D",  # Bright yellow
+            "lime": "#A8E65C",  # Lime green
+            "green": "#6BCF7F",  # Medium green
+            "cyan": "#4DD0E1",  # Cyan/teal
+            "blue": "#6BA3FF",  # Sky blue
+            "violet": "#B19CD9",  # Soft violet
+            "pink": "#FFB6C1",  # Light pink
+            "gray": "#D3D3D3",  # Light gray
+            "black": "#4A4A4A",  # Dark gray (for visibility)
+        }
+        return colors.get(color_name, "#D3D3D3")  # Default to gray
 
 
 # ============================================================================

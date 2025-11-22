@@ -19,5 +19,9 @@ jira>=3.5.0
 # Security - Cross-platform encryption
 cryptography>=41.0.0
 
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
 # Additional Runtime
 python-dotenv>=1.0.0

@@ -14,6 +14,9 @@ from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from dotenv import load_dotenv
 
+# Version info
+from __version__ import __version__
+
 # Import services
 from services import session_manager
 
@@ -76,7 +79,7 @@ app.logger.info("Sticky2Jira application starting...")
 def index():
     """Main application page."""
     app.logger.info("Serving index page")
-    return render_template("index.html")
+    return render_template("index.html", version=__version__)
 
 
 @app.route("/uploads/<filename>")
